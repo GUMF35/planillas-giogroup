@@ -26,7 +26,7 @@ except:
     st.set_page_config(page_title="Gio Group Admin", page_icon="🏢", layout="wide")
 
 # --- 2. BASE DE DATOS EN MEMORIA (ROLES Y CONFIGURACIÓN EXACTA) ---
-if "salario_operativo_neto" not in st.session_state: st.session_state["salario_operativo_neto"] = 183.96
+if "salario_operativo_neto" not in st.session_state: st.session_state["salario_operativo_neto"] = 367.92 # Base mensual estándar (para 1 mes)
 if "salario_directivo_neto" not in st.session_state: st.session_state["salario_directivo_neto"] = 300.00
 if "meses_multiplicador" not in st.session_state: st.session_state["meses_multiplicador"] = 1.0
 if "periodo_texto" not in st.session_state: st.session_state["periodo_texto"] = "1 Mes"
@@ -128,8 +128,9 @@ with st.sidebar:
 if menu_seleccionado != "Configuración":
     with st.container():
         st.markdown("<h2 style='color:#0F172A; font-weight:800;'>Bienvenido, Administración 👋</h2>", unsafe_allow_html=True)
-        st.info(f"📅 **Período detectado en PDF:** {st.session_state['periodo_texto']} | **Multiplicador:** {st.session_state['meses_multiplicador']}")
+        st.info(f"📅 **Período analizado:** {st.session_state['periodo_texto']}")
         
+        # UPLOADER AISLADO: Solo limpia/reemplaza los datos del PDF sin alterar sueldos base configurados
         archivo_subido = st.file_uploader("📥 Sincronizar reporte de ventas (PDF)", type=["pdf"])
 
         if archivo_subido is not None:
@@ -163,9 +164,9 @@ if menu_seleccionado != "Configuración":
                     factor_mult = 1.0
                     texto_periodo = f"Del {min_fecha.strftime('%d/%m/%Y')} al {max_fecha.strftime('%d/%m/%Y')} (1 Mes)"
                 else:
-                    factor_mult = float(round(dias_diff / 30.0))
+                    factor_mult = float(round(dias_diff / 30.0, 1))
                     factor_mult = max(1.0, factor_mult)
-                    texto_periodo = f"Del {min_fecha.strftime('%d/%m/%Y')} al {max_fecha.strftime('%d/%m/%Y')} ({int(factor_mult)} meses)"
+                    texto_periodo = f"Del {min_fecha.strftime('%d/%m/%Y')} al {max_fecha.strftime('%d/%m/%Y')} ({factor_mult} meses)"
 
                 st.session_state["meses_multiplicador"] = factor_mult
                 st.session_state["periodo_texto"] = texto_periodo
@@ -246,29 +247,6 @@ if menu_seleccionado != "Configuración":
 
 if menu_seleccionado == "Dashboard":
     st.markdown("<h2 style='color:#0F172A;'>Panel de Control General (Dashboard)</h2>", unsafe_allow_html=True)
-    
-    # Botón exclusivo de limpieza de datos en el Dashboard (preserva correos personales)
-    if st.button("🗑️ Limpiar / Reiniciar Datos del Sistema"):
-        st.session_state["total_ingresos_pdf"] = 0.0
-        st.session_state["ingresos_por_marca"] = {}
-        st.session_state["extras_por_marca"] = {}
-        st.session_state["total_fondo_publicidad"] = 0.0
-        st.session_state["meses_multiplicador"] = 1.0
-        st.session_state["periodo_texto"] = "1 Mes"
-        for emp, info in st.session_state["empleados"].items():
-            st.session_state[f"com_{emp}"] = 0.0
-            st.session_state[f"extra_bruto_{emp}"] = 0.0
-            st.session_state[f"ret_pub_{emp}"] = 0.0
-            st.session_state[f"serv_tot_{emp}"] = 0.0
-            st.session_state[f"hex_{emp}"] = 0.0
-            st.session_state[f"desc_{emp}"] = 0.0
-            if "Porcentaje" in info["mod"]:
-                st.session_state[f"base_{emp}"] = 0.0
-            else:
-                st.session_state[f"base_{emp}"] = calcular_bruto_mensual(info["rol"])
-        st.success("¡Datos y caché reiniciados correctamente desde el Dashboard (correos preservados)!")
-        st.rerun()
-
     st.markdown("<br>", unsafe_allow_html=True)
 
     if st.session_state["total_ingresos_pdf"] > 0:
@@ -283,14 +261,28 @@ if menu_seleccionado == "Dashboard":
         col2.metric("💸 Costo Operativo (Planillas)", f"${costo_planilla:,.2f}")
         col3.metric("🏦 Utilidad Neta Real", f"${utilidad_neta:,.2f}", delta=f"{((utilidad_neta/st.session_state['total_ingresos_pdf'])*100):.1f}% Margen")
 
-        st.markdown("<br><h3 style='color:#0F172A;'>🎯 Rendimiento Neto de Marcas (Holding)</h3>", unsafe_allow_html=True)
+        # --- SECCIÓN: PERSONA ESTRELLA (MVP DEL PERÍODO) ---
+        st.markdown("<br>", unsafe_allow_html=True)
+        # Calcular quién generó más en servicios totales
+        estrella_collab = max(st.session_state["empleados"].keys(), key=lambda e: st.session_state.get(f"serv_tot_{e}", 0.0))
+        monto_estrella = st.session_state.get(f"serv_tot_{estrella_collab}", 0.0)
+        
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, #1E3A8A 0%, #2563EB 100%); padding: 20px; border-radius: 12px; color: white; box-shadow: 0px 4px 15px rgba(37,99,235,0.2);">
+            <h3 style="margin: 0; color: #FFFFFF !important;">🌟 Colaborador Estrella del Período (MVP)</h3>
+            <p style="margin: 5px 0 0 0; font-size: 1.2rem;"><b>{estrella_collab}</b> lidera el rendimiento con un total de <b>${monto_estrella:,.2f}</b> generados en servicios.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        st.markdown("<h3 style='color:#0F172A;'>🎯 Rendimiento Neto de Marcas (Holding)</h3>", unsafe_allow_html=True)
         marcas = st.session_state["ingresos_por_marca"]
         extras = st.session_state["extras_por_marca"]
         cols_metas = st.columns(len(marcas) if len(marcas) > 0 else 1)
         metas_config = {}
         
         for i, (marca, ingresos) in enumerate(marcas.items()):
-            meta_def = 8000.0 if "Dr" in marca else 5000.0
+            meta_def = 8000.0 * st.session_state["meses_multiplicador"] if "Dr" in marca else 5000.0 * st.session_state["meses_multiplicador"]
             metas_config[marca] = cols_metas[i].number_input(f"Meta: {marca}", value=meta_def, step=500.0, key=f"meta_{marca}")
         
         df_marcas = pd.DataFrame([{
@@ -301,27 +293,10 @@ if menu_seleccionado == "Dashboard":
         with c_chart: st.bar_chart(pd.DataFrame.from_dict(marcas, orient='index', columns=['Ingresos Brutos ($)']))
         with c_table: st.dataframe(df_marcas.style.format({"Ingresos Brutos": "${:,.2f}", "Extras Brutos": "${:,.2f}", "NETO CLÍNICA": "${:,.2f}", "Meta Asignada": "${:,.2f}"}), hide_index=True)
     else:
-        st.info("Sube un reporte PDF en la parte superior para habilitar las métricas del Dashboard.")
+        st.info("Sube un reporte PDF en la parte superior para habilitar las métricas y la Persona Estrella del Dashboard.")
 
 elif menu_seleccionado == "Planillas":
     st.markdown("<h2 style='color:#0F172A;'>Control Financiero de Planillas</h2>", unsafe_allow_html=True)
-    
-    # Botón depurador en Planillas (limpia bonos, descuentos y comisiones, preservando correos personales)
-    if st.button("🗑️ Limpiar / Reiniciar Datos de Planilla"):
-        for emp, info in st.session_state["empleados"].items():
-            st.session_state[f"com_{emp}"] = 0.0
-            st.session_state[f"extra_bruto_{emp}"] = 0.0
-            st.session_state[f"ret_pub_{emp}"] = 0.0
-            st.session_state[f"serv_tot_{emp}"] = 0.0
-            st.session_state[f"hex_{emp}"] = 0.0
-            st.session_state[f"desc_{emp}"] = 0.0
-            if "Porcentaje" in info["mod"]:
-                st.session_state[f"base_{emp}"] = 0.0
-            else:
-                st.session_state[f"base_{emp}"] = calcular_bruto_mensual(info["rol"]) * st.session_state["meses_multiplicador"]
-        st.success("¡Datos de planilla limpiados correctamente (correos electrónicos preservados)!")
-        st.rerun()
-
     st.markdown("<br>", unsafe_allow_html=True)
     datos_emp = []
 
@@ -396,7 +371,7 @@ elif menu_seleccionado == "Planillas":
         st.dataframe(df_res.style.format({
             "Sueldo Base (Bruto)": "${:.2f}", 
             "Extra Bruto": "${:,.2f}",
-            "Retención Pub (25%)": "${:.2f}",
+            "Retención Pub (25%)": "${:,.2f}",
             "Comisiones Netas": "${:.2f}", 
             "Bonos": "${:.2f}", 
             "Descuentos": "${:.2f}", 
