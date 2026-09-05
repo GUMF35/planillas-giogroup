@@ -68,7 +68,7 @@ empleados_lista = [
     "Mario de Paz"
 ]
 
-# Mapa de búsqueda inteligente para que la app sepa cómo encontrarlos en el PDF
+# Mapa de búsqueda inteligente para el PDF
 mapa_busqueda_pdf = {
     "Maydely Hernández": "MAYDELY",
     "Luis Violante": "LUIS",
@@ -126,7 +126,6 @@ if archivo_subido is not None:
 
                 total_ingresos_pdf = df_reporte[col_precio].sum()
 
-                # Función genérica que suma a TODOS sin dejar a nadie fuera
                 def procesar_empleado(clave_busqueda):
                     df_p = df_reporte[df_reporte[col_prof].astype(str).str.contains(clave_busqueda, case=False, na=False, regex=True)]
                     tot_servicios = df_p[col_precio].sum()
@@ -139,21 +138,26 @@ if archivo_subido is not None:
                     
                     return neto_estandar, desc_pub, tot_servicios
 
-                # Escaneo dinámico para asignar sumas a cada integrante
+                # Escaneo dinámico y lógica de negocio estricta
                 for emp, clave in mapa_busqueda_pdf.items():
                     estandar_val, desc_pub_val, tot_servicios_val = procesar_empleado(clave)
                     
+                    # 1. Registrar todo lo generado para el Dashboard
                     st.session_state[f"serv_tot_{emp}"] = tot_servicios_val
                     
-                    # Verificamos la modalidad que tienen en el selectbox
-                    mod = st.session_state.get(f"mod_{emp}", "Estándar")
-                    if "Estándar" in mod:
-                        st.session_state[f"com_{emp}"] = estandar_val
+                    # 2. Asignar comisiones de planilla solo a masajistas
+                    if emp in ["Maydely Hernández", "Luis Violante", "Jessica Lemus"]:
+                        mod = st.session_state.get(f"mod_{emp}", "Estándar")
+                        if "Estándar" in mod:
+                            st.session_state[f"com_{emp}"] = estandar_val
+                        else:
+                            porcentaje_actual = st.session_state.get(f"porc_{emp}", 20)
+                            st.session_state[f"com_{emp}"] = tot_servicios_val * (porcentaje_actual / 100.0)
                     else:
-                        porcentaje_actual = st.session_state.get(f"porc_{emp}", 20)
-                        st.session_state[f"com_{emp}"] = tot_servicios_val * (porcentaje_actual / 100.0)
+                        # Directivos y administrativos NO cobran comisión automática de servicios
+                        st.session_state[f"com_{emp}"] = 0.0
 
-                st.success("✅ ¡Reporte global PDF procesado! Sumatorias asignadas correctamente a todo el equipo, incluyendo al Dr. Gio Molina.")
+                st.success("✅ ¡Reporte global PDF procesado! Sumatorias registradas para Dashboard y comisiones limitadas a personal operativo.")
     except Exception as e:
         st.warning(f"Advertencia al leer PDF: {e}")
 
@@ -200,16 +204,19 @@ with tab_metas:
                 "Estado": cumplio
             })
 
+        # Cálculo exacto de la Utilidad Neta restando la planilla configurada actualmente
         costo_planilla_estimado = sum([
-            (base_fijos if "Gio" in emp or "Gerson" in emp or "Edwin" in emp else base_masajistas) + 
-            st.session_state.get(f"com_{emp}", 0.0) 
+            st.session_state.get(f"base_{emp}", base_fijos if emp not in ["Maydely Hernández", "Luis Violante", "Jessica Lemus"] else base_masajistas) + 
+            st.session_state.get(f"com_{emp}", 0.0) +
+            st.session_state.get(f"hex_{emp}", 0.0) -
+            st.session_state.get(f"desc_{emp}", 0.0)
             for emp in empleados_lista
         ])
         utilidad_neta_clinica = total_ingresos_pdf - costo_planilla_estimado
 
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("💰 Ingresos Brutos (PDF)", f"${total_ingresos_pdf:,.2f}")
-        col2.metric("🏥 Utilidad Neta Clínica", f"${utilidad_neta_clinica:,.2f}", help="Ingresos brutos menos pago total de sueldos y comisiones")
+        col2.metric("🏥 Utilidad Neta Clínica", f"${utilidad_neta_clinica:,.2f}", help="Ingresos brutos menos costo exacto de planilla actual (sueldos, comisiones, bonos)")
         col3.metric("⭐ Empleado Estrella", f"{mejor_empleado}", f"${mayor_venta:,.2f}")
         col4.metric("🎯 Meta Actual", f"${meta_minima:,.2f}")
 
@@ -276,30 +283,35 @@ with tab_planillas:
         with st.expander(f"👤 {emp} - Configurar Pago"):
             col1, col2, col3 = st.columns(3)
             
-            base_sugerido = base_fijos if "Gio" in emp or "Gerson" in emp or "Edwin" in emp else base_masajistas
+            base_sugerido = base_fijos if emp not in ["Maydely Hernández", "Luis Violante", "Jessica Lemus"] else base_masajistas
             desc_pub_actual = 0.0
             modalidad_str = "Estándar"
 
             with col1:
                 sueldo_base = st.number_input(f"Sueldo Base ($) [{emp}]", value=float(base_sugerido), key=f"base_{emp}")
                 
-                modalidad = st.selectbox(f"Modalidad [{emp}]", ["Estándar (Sueldo + Comisiones con 25% Pub)", "Porcentaje Directo (%)"], key=f"mod_{emp}")
-                tot_serv = st.session_state.get(f"serv_tot_{emp}", 0.0)
-                
-                if "Estándar" in modalidad:
-                    modalidad_str = "Estándar"
-                    if df_reporte is not None and 'col_prof' in locals() and 'col_precio' in locals():
-                        clave = mapa_busqueda_pdf.get(emp, emp.split()[0])
-                        df_p = df_reporte[df_reporte[col_prof].astype(str).str.contains(clave, case=False, na=False, regex=True)]
-                        df_ex = df_p[df_p[col_precio] >= 60].copy()
-                        ext_val = (df_ex[col_precio] - 60).sum()
-                        d_pub = ext_val * 0.25
-                        st.session_state[f"com_{emp}"] = max(0.0, ext_val - d_pub)
-                        desc_pub_actual = d_pub
+                if emp in ["Maydely Hernández", "Luis Violante", "Jessica Lemus"]:
+                    modalidad = st.selectbox(f"Modalidad [{emp}]", ["Estándar (Sueldo + Comisiones con 25% Pub)", "Porcentaje Directo (%)"], key=f"mod_{emp}")
+                    tot_serv = st.session_state.get(f"serv_tot_{emp}", 0.0)
+                    
+                    if "Estándar" in modalidad:
+                        modalidad_str = "Estándar"
+                        if df_reporte is not None and 'col_prof' in locals() and 'col_precio' in locals():
+                            clave = mapa_busqueda_pdf.get(emp, emp.split()[0])
+                            df_p = df_reporte[df_reporte[col_prof].astype(str).str.contains(clave, case=False, na=False, regex=True)]
+                            df_ex = df_p[df_p[col_precio] >= 60].copy()
+                            ext_val = (df_ex[col_precio] - 60).sum()
+                            d_pub = ext_val * 0.25
+                            st.session_state[f"com_{emp}"] = max(0.0, ext_val - d_pub)
+                            desc_pub_actual = d_pub
+                    else:
+                        modalidad_str = "Porcentaje Directo"
+                        porc_personalizado = st.slider(f"Porcentaje (%) [{emp}]", 0, 100, 20, key=f"porc_{emp}")
+                        st.session_state[f"com_{emp}"] = tot_serv * (porc_personalizado / 100.0)
                 else:
-                    modalidad_str = "Porcentaje Directo"
-                    porc_personalizado = st.slider(f"Porcentaje (%) [{emp}]", 0, 100, 20, key=f"porc_{emp}")
-                    st.session_state[f"com_{emp}"] = tot_serv * (porc_personalizado / 100.0)
+                    modalidad_str = "Administrativo/Fijo"
+                    tot_serv_admin = st.session_state.get(f"serv_tot_{emp}", 0.0)
+                    st.info(f"💼 Rol Directivo/Admin. Ingresos brutos generados a la clínica: ${tot_serv_admin:.2f}. (Sin comisión automática).")
 
                 comision_extra = st.number_input(f"Comisión Real Generada ($) [{emp}]", key=f"com_{emp}", step=5.0)
 
@@ -585,3 +597,4 @@ with tab_auditoria:
         st.download_button("📥 Descargar Historial (.xlsx)", data=out_aud, file_name="Auditoria.xlsx")
     else:
         st.info("No hay registros de envío en esta sesión todavía.")
+    
