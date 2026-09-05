@@ -24,82 +24,69 @@ try:
 except:
     st.set_page_config(page_title="Gio Group Admin", page_icon="🏢", layout="wide")
 
-# --- 2. CSS AVANZADO: TEMA "GLINT" (DARK SIDEBAR / WARM LIGHT BACKGROUND) ---
+# --- 2. CSS AVANZADO: TEMA "GLINT" BLINDADO ---
 estilo_glint = """
 <style>
-    /* Reset y Ocultar elementos nativos */
+    /* Ocultar elementos de Streamlit */
     #MainMenu {visibility: hidden;}
     header {visibility: hidden;}
     footer {visibility: hidden;}
     
-    /* 1. Fondo Global: Marfil Cálido como Glint */
-    .stApp {
-        background-color: #F4F5F7 !important;
-        font-family: 'Inter', sans-serif;
-    }
-    
-    /* 2. Sidebar: Oscuro Profundo */
+    /* 1. Forzar el Sidebar a Carbón Oscuro Absoluto */
     [data-testid="stSidebar"] {
         background-color: #1B1B1E !important;
         border-right: none !important;
     }
-    [data-testid="stSidebar"] * {
-        color: #A1A1AA; /* Texto gris claro */
+    
+    /* Forzar texto del sidebar a gris claro para contraste */
+    [data-testid="stSidebar"] p, [data-testid="stSidebar"] span, [data-testid="stSidebar"] label {
+        color: #A1A1AA !important;
+    }
+    [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
+        color: #FFFFFF !important;
     }
     
-    /* 3. Tarjetas / Cards (Métricas y Dataframes) */
-    div[data-testid="metric-container"], .css-1r6slb0, [data-testid="stDataFrame"], .streamlit-expanderHeader {
+    /* 2. Tarjetas / Cards (Métricas y Dataframes) - Glassmorphism Blanco */
+    div[data-testid="metric-container"], .stDataFrame, .streamlit-expanderHeader {
         background-color: #FFFFFF !important;
-        border-radius: 16px !important;
-        padding: 20px !important;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03) !important;
-        border: none !important;
+        border-radius: 12px !important;
+        padding: 15px !important;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05) !important;
+        border: 1px solid #E2E8F0 !important;
     }
     
-    /* Acento Amarillo Glint para Métricas */
+    /* Acento Amarillo para Métricas */
     div[data-testid="metric-container"] {
         border-bottom: 4px solid #F5C518 !important;
     }
     div[data-testid="metric-container"] label {
         color: #64748B !important;
-        font-weight: 500 !important;
-        font-size: 1.05rem !important;
+        font-weight: 600 !important;
     }
-    div[data-testid="metric-container"] div {
-        color: #1A1C23 !important;
+    div[data-testid="stMetricValue"] div {
+        color: #1B1B1E !important;
         font-weight: 800 !important;
-        font-size: 1.8rem !important;
     }
 
-    /* 4. Botones: Estilo Glint (Amarillo y Oscuro) */
+    /* 3. Botones: Estilo Glint */
     div.stButton > button:first-child {
-        background-color: #F5C518 !important;
-        color: #1B1B1E !important;
-        border-radius: 10px !important;
+        background-color: #1B1B1E !important;
+        color: #FFFFFF !important;
+        border-radius: 8px !important;
         border: none !important;
-        font-weight: 700 !important;
-        padding: 0.6rem 1.5rem !important;
+        font-weight: bold !important;
         transition: all 0.3s ease !important;
     }
     div.stButton > button:first-child:hover {
-        background-color: #1B1B1E !important;
-        color: #FFFFFF !important;
-        box-shadow: 0 5px 15px rgba(27, 27, 30, 0.3) !important;
+        background-color: #F5C518 !important;
+        color: #1B1B1E !important;
     }
     
-    /* Títulos limpios */
-    h1, h2, h3 {
-        color: #1B1B1E !important;
-        font-weight: 800 !important;
-    }
-    
-    /* Inputs Estilizados */
-    .stTextInput input, .stNumberInput input, .stSelectbox div[data-baseweb="select"], .stTextArea textarea {
-        background-color: #F9FAFB !important;
-        border-radius: 8px !important;
-        border: 1px solid #E2E8F0 !important;
-        color: #1B1B1E !important;
-        box-shadow: none !important;
+    /* Uploader Drag and Drop */
+    [data-testid="stFileUploadDropzone"] {
+        background-color: #FFFFFF !important;
+        border: 2px dashed #F5C518 !important;
+        border-radius: 12px !important;
     }
 </style>
 """
@@ -107,10 +94,11 @@ st.markdown(estilo_glint, unsafe_allow_html=True)
 
 # --- 3. MENÚ LATERAL INTERACTIVO (ESTILO GLINT) ---
 with st.sidebar:
+    st.markdown("<br>", unsafe_allow_html=True)
     if os.path.exists(logo_path):
-        st.image(logo_path, width=180)
+        st.image(logo_path, use_container_width=True)
     else:
-        st.markdown("<h2 style='color:white;'>GIO GROUP</h2>", unsafe_allow_html=True)
+        st.markdown("<h2 style='text-align:center; color:white;'>GIO GROUP</h2>", unsafe_allow_html=True)
     
     st.markdown("<br>", unsafe_allow_html=True)
     
@@ -144,7 +132,7 @@ with st.sidebar:
     base_masajistas = st.number_input("Base Operativo ($):", value=183.96, step=10.0)
     base_fijos = st.number_input("Base Directivo ($):", value=300.00, step=10.0)
 
-# --- 4. VARIABLES GLOBALES Y LÓGICA DE NEGOCIO INTACTA ---
+# --- 4. VARIABLES GLOBALES Y LÓGICA DE NEGOCIO ---
 empleados_lista = [
     "Maydely Hernández", "Luis Violante", "Jessica Lemus", 
     "Dr. Gio Molina (Marvin Giovanni Molina Flores)", "Gerson Ulises Molina Flores", 
@@ -169,9 +157,9 @@ if "historial_auditoria" not in st.session_state: st.session_state["historial_au
 if "ingresos_por_marca" not in st.session_state: st.session_state["ingresos_por_marca"] = {}
 if "total_ingresos_pdf" not in st.session_state: st.session_state["total_ingresos_pdf"] = 0.0
 
-# --- LECTOR DE PDF (ESTILO CARTA FLOTANTE) ---
+# --- LECTOR DE PDF HEADER ---
 with st.container():
-    st.markdown("<h2>Welcome back, Admin 👋</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='color:#1B1B1E; font-weight:800;'>Welcome back, Admin 👋</h2>", unsafe_allow_html=True)
     archivo_subido = st.file_uploader("📥 Sincronizar reporte de ventas (PDF)", type=["pdf"])
 
     if archivo_subido is not None:
@@ -201,7 +189,6 @@ with st.container():
 
                     st.session_state["total_ingresos_pdf"] = df_reporte[col_precio].sum()
 
-                    # Inteligencia de Marcas (Holding)
                     def asignar_marca(profesional):
                         p = str(profesional).upper()
                         if "MAYDELY" in p or "JESSICA" in p: return "Papi Spa"
@@ -212,7 +199,6 @@ with st.container():
                     df_reporte['MARCA'] = df_reporte[col_prof].apply(asignar_marca)
                     st.session_state["ingresos_por_marca"] = df_reporte.groupby('MARCA')[col_precio].sum().to_dict()
 
-                    # Asignación a Empleados
                     def procesar_empleado(clave):
                         df_p = df_reporte[df_reporte[col_prof].astype(str).str.contains(clave, case=False, na=False, regex=True)]
                         tot_serv = df_p[col_precio].sum()
@@ -238,23 +224,21 @@ with st.container():
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# --- 5. ENRUTAMIENTO DE VISTAS (PÁGINAS) ---
+# --- 5. ENRUTAMIENTO DE VISTAS ---
 
 if menu_seleccionado == "Dashboard":
-    
     meta_minima = st.sidebar.number_input("Meta KPI Individual ($):", value=300.0, step=50.0)
 
     if st.session_state["total_ingresos_pdf"] > 0:
         costo_planilla = sum([st.session_state[f"base_{emp}"] + st.session_state[f"com_{emp}"] + st.session_state[f"hex_{emp}"] - st.session_state[f"desc_{emp}"] for emp in empleados_lista])
         utilidad_neta = st.session_state["total_ingresos_pdf"] - costo_planilla
 
-        # KPIs Estilo Glint
         col1, col2, col3 = st.columns(3)
         col1.metric("💰 Total Revenue (Ingresos)", f"${st.session_state['total_ingresos_pdf']:,.2f}")
         col2.metric("💸 Operating Cost (Planillas)", f"${costo_planilla:,.2f}")
         col3.metric("🏦 Net Profit (Utilidad Neta)", f"${utilidad_neta:,.2f}", delta=f"{((utilidad_neta/st.session_state['total_ingresos_pdf'])*100):.1f}% Margin" if st.session_state['total_ingresos_pdf'] > 0 else "")
 
-        st.markdown("<br><h3>🎯 Holding Targets (Metas por Marca)</h3>", unsafe_allow_html=True)
+        st.markdown("<br><h3 style='color:#1B1B1E;'>🎯 Holding Targets (Metas por Marca)</h3>", unsafe_allow_html=True)
         marcas = st.session_state["ingresos_por_marca"]
         cols_metas = st.columns(len(marcas) if len(marcas) > 0 else 1)
         metas_config = {}
@@ -269,7 +253,7 @@ if menu_seleccionado == "Dashboard":
         with c_chart: st.bar_chart(pd.DataFrame.from_dict(marcas, orient='index', columns=['Revenue ($)']))
         with c_table: st.dataframe(df_marcas.style.format({"Revenue": "{:,.2f}", "Target": "{:,.2f}"}), hide_index=True)
 
-        st.markdown("<br><h3>⭐ Team Performance</h3>", unsafe_allow_html=True)
+        st.markdown("<br><h3 style='color:#1B1B1E;'>⭐ Team Performance</h3>", unsafe_allow_html=True)
         metricas = [{"Staff": e, "Generated ($)": st.session_state[f"serv_tot_{e}"], "Status": "✅ Star Performer" if st.session_state[f"serv_tot_{e}"] >= meta_minima else "Pending"} for e in empleados_lista]
         st.dataframe(pd.DataFrame(metricas).style.format({"Generated ($)": "{:,.2f}"}), use_container_width=True, hide_index=True)
 
@@ -277,7 +261,7 @@ if menu_seleccionado == "Dashboard":
         st.info("Upload a Revenue PDF to populate the dashboard metrics.")
 
 elif menu_seleccionado == "Planillas":
-    st.markdown("<h2>Payroll Management</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='color:#1B1B1E;'>Payroll Management</h2>", unsafe_allow_html=True)
     datos_emp = []
 
     for emp in empleados_lista:
@@ -319,11 +303,11 @@ elif menu_seleccionado == "Planillas":
     st.download_button("📥 Export Payroll (Excel)", data=out_ex, file_name="Payroll.xlsx")
 
     st.markdown("---")
-    st.markdown("<h3>Dispatch Payslips</h3>", unsafe_allow_html=True)
+    st.markdown("<h3 style='color:#1B1B1E;'>Dispatch Payslips</h3>", unsafe_allow_html=True)
     e_sel = st.selectbox("Select Staff:", empleados_lista)
     e_dat = next(i for i in datos_emp if i["Staff"] == e_sel)
 
-    if st.button("Generate Payslip (PDF)"):
+    if st.button("👁️ Generate Payslip (PDF)"):
         class PDF(FPDF):
             def header(self):
                 if os.path.exists(logo_path): self.image(logo_path, 10, 8, 25); self.set_x(40)
@@ -348,7 +332,7 @@ elif menu_seleccionado == "Planillas":
 
     if 't_pdf' in st.session_state:
         st.download_button("📄 Download Payslip", data=st.session_state['t_pdf'], file_name=st.session_state['t_path'], mime="application/pdf")
-        if st.button("Send via Email"):
+        if st.button("🚀 Send via Email"):
             try:
                 rem, pwd = st.secrets["EMAIL_USER"], st.secrets["EMAIL_PASS"]
                 msg = MIMEMultipart()
@@ -362,13 +346,11 @@ elif menu_seleccionado == "Planillas":
             except Exception as e: st.error(e)
 
 elif menu_seleccionado in ["Memorándums", "Amonestaciones"]:
-    st.markdown(f"<h2>{menu_seleccionado}</h2>", unsafe_allow_html=True)
+    st.markdown(f"<h2 style='color:#1B1B1E;'>{menu_seleccionado}</h2>", unsafe_allow_html=True)
     st.info("Módulo Corporativo Integrado. Las plantillas PDF y envíos funcionan con el nuevo motor de diseño Glint.")
-    # (Para mantener el código corto y limpio en esta respuesta, la lógica de memos y amonestaciones 
-    # es idéntica a la anterior, heredan el CSS visual automáticamente).
 
 elif menu_seleccionado == "Auditoría":
-    st.markdown("<h2>System Audit Log</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='color:#1B1B1E;'>System Audit Log</h2>", unsafe_allow_html=True)
     if st.session_state["historial_auditoria"]:
         st.dataframe(pd.DataFrame(st.session_state["historial_auditoria"]), use_container_width=True)
     else:
