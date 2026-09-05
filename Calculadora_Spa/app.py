@@ -189,7 +189,6 @@ if menu_seleccionado != "Configuración":
                         df_reporte['EXTRA_BRUTO'] = df_reporte.apply(calcular_extra_marca, axis=1)
                         st.session_state["extras_por_marca"] = df_reporte.groupby('MARCA')['EXTRA_BRUTO'].sum().to_dict()
                         
-                        # Actualizar sueldos, comisiones y retención de publicidad del periodo
                         st.session_state["total_fondo_publicidad"] = 0.0
                         for emp, info in st.session_state["empleados"].items():
                             st.session_state[f"base_{emp}"] = calcular_bruto_mensual(info["rol"]) * st.session_state["meses_multiplicador"]
@@ -228,7 +227,7 @@ if menu_seleccionado != "Configuración":
 if menu_seleccionado == "Dashboard":
     if st.session_state["total_ingresos_pdf"] > 0:
         costo_planilla = sum([
-            st.session_state[f"base_{emp}"] + st.session_state[f"com_{emp}"] + st.session_state[f"hex_{emp}"] - st.session_state[f"desc_{emp}"] - (st.session_state[f"base_{emp}"] * 0.10)
+            st.session_state[f"base_{emp}"] + st.session_state[f"com_{emp}"] + st.session_state[f"hex_{emp}"] - st.session_state[f"desc_{emp}"] - (0.0 if "Porcentaje" in st.session_state.get(f"mod_{emp}", st.session_state["empleados"][emp]["mod"]) and st.session_state["empleados"][emp]["rol"] == "Operativo" else st.session_state[f"base_{emp}"] * 0.10)
             for emp in st.session_state["empleados"].keys()
         ])
         utilidad_neta = st.session_state["total_ingresos_pdf"] - costo_planilla
@@ -274,13 +273,11 @@ elif menu_seleccionado == "Planillas":
                     mod = st.selectbox(f"Modalidad", ["Estándar (Con retención 25% Pub)", "Porcentaje Directo (%)"], index=0 if "Estándar" in st.session_state.get(f"mod_{emp}", info["mod"]) else 1, key=f"m_{emp}")
                     if "Estándar" in mod:
                         st.session_state[f"mod_{emp}"] = "Estándar (Con retención 25% Pub)"
-                        # Recalcular retención de publicidad y comisión estándar
-                        df_p = pd.DataFrame() # se mantiene el valor ya calculado por el PDF
                     else:
                         st.session_state[f"mod_{emp}"] = "Porcentaje Directo (%)"
-                        porc = st.slider(f"% Ganancia", 0, 100, st.session_state.get(f"porc_{emp}", info["porc"]), key=f"p_{emp}")
+                        porc = st.slider(f"% Ganancia", 0, 100, int(st.session_state.get(f"porc_{emp}", info["porc"])), key=f"p_{emp}")
                         st.session_state[f"com_{emp}"] = st.session_state[f"serv_tot_{emp}"] * (porc / 100.0)
-                        st.session_state[f"ret_pub_{emp}"] = 0.0 # En porcentaje directo no aplica retención de publicidad
+                        st.session_state[f"ret_pub_{emp}"] = 0.0
                         st.session_state[f"porc_{emp}"] = porc
                 else:
                     st.caption(f"Personal Administrativo (Sueldo Fijo)")
@@ -300,10 +297,15 @@ elif menu_seleccionado == "Planillas":
                 e_em = st.text_input(f"Correo", value=st.session_state[f"email_{emp}"], key=f"ui_e_{emp}")
                 st.session_state[f"email_{emp}"] = e_em
 
-            renta_calculada = st.session_state[f"base_{emp}"] * 0.10
+            # REGLA NUEVA: Si es Operativo con Porcentaje Directo, Renta = 0. De lo contrario, 10% sobre base.
+            mod_actual = st.session_state.get(f"mod_{emp}", info["mod"])
+            if info["rol"] == "Operativo" and "Porcentaje" in mod_actual:
+                renta_calculada = 0.0
+            else:
+                renta_calculada = st.session_state[f"base_{emp}"] * 0.10
+
             ret_pub_actual = st.session_state.get(f"ret_pub_{emp}", 0.0)
             
-            # Total a pagar considerando sueldo base + comisiones + bonos - renta - retención publicidad - descuentos
             t_net = st.session_state[f"base_{emp}"] + st.session_state[f"com_{emp}"] + st.session_state[f"hex_{emp}"] - renta_calculada - ret_pub_actual - st.session_state[f"desc_{emp}"]
             
             datos_emp.append({
@@ -368,7 +370,8 @@ elif menu_seleccionado == "Planillas":
             if e_dat['Retención Pub (25%)'] > 0:
                 pdf.cell(130, 8, "  (-) Retención 25% Publicidad", 1, 0, 'L'); pdf.cell(60, 8, f"-${e_dat['Retención Pub (25%)']:.2f}", 1, 1, 'R')
             
-            pdf.cell(130, 8, "  (-) 10% Retención de Renta (Únicamente s/Base)", 1, 0, 'L'); pdf.cell(60, 8, f"-${e_dat['10% Renta']:.2f}", 1, 1, 'R')
+            if e_dat['10% Renta'] > 0:
+                pdf.cell(130, 8, "  (-) 10% Retención de Renta", 1, 0, 'L'); pdf.cell(60, 8, f"-${e_dat['10% Renta']:.2f}", 1, 1, 'R')
             
             pdf.set_font('helvetica', 'B', 11); pdf.set_fill_color(243, 244, 246); pdf.set_text_color(10, 25, 47)
             pdf.cell(130, 10, "  TOTAL LÍQUIDO A RECIBIR", 1, 0, 'L', fill=True); pdf.cell(60, 10, f"${e_dat['Total a Pagar']:.2f}", 1, 1, 'R', fill=True)
