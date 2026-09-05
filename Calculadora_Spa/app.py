@@ -48,6 +48,7 @@ def calcular_bruto_mensual(rol):
 
 for emp, info in st.session_state["empleados"].items():
     if f"com_{emp}" not in st.session_state: st.session_state[f"com_{emp}"] = 0.0
+    if f"extra_bruto_{emp}" not in st.session_state: st.session_state[f"extra_bruto_{emp}"] = 0.0
     if f"ret_pub_{emp}" not in st.session_state: st.session_state[f"ret_pub_{emp}"] = 0.0
     if f"serv_tot_{emp}" not in st.session_state: st.session_state[f"serv_tot_{emp}"] = 0.0
     if f"hex_{emp}" not in st.session_state: st.session_state[f"hex_{emp}"] = 0.0
@@ -201,18 +202,21 @@ if menu_seleccionado != "Configuración":
                                 mod_actual = st.session_state.get(f"mod_{emp}", info["mod"])
                                 if "Estándar" in mod_actual:
                                     df_ex = df_p[df_p[col_precio] >= 60].copy()
-                                    ext_total = (df_ex[col_precio] - 60).sum() if not df_ex.empty else 0.0
-                                    desc_pub = ext_total * 0.25
-                                    comision_neta = max(0.0, ext_total - desc_pub)
+                                    ext_bruto_total = (df_ex[col_precio] - 60).sum() if not df_ex.empty else 0.0
+                                    desc_pub = ext_bruto_total * 0.25
+                                    comision_neta = max(0.0, ext_bruto_total - desc_pub)
                                     
+                                    st.session_state[f"extra_bruto_{emp}"] = ext_bruto_total
                                     st.session_state[f"com_{emp}"] = comision_neta
                                     st.session_state[f"ret_pub_{emp}"] = desc_pub
                                     st.session_state["total_fondo_publicidad"] += desc_pub
                                 else:
                                     porc = st.session_state.get(f"porc_{emp}", info["porc"])
+                                    st.session_state[f"extra_bruto_{emp}"] = 0.0
                                     st.session_state[f"com_{emp}"] = tot_serv * (porc / 100.0)
                                     st.session_state[f"ret_pub_{emp}"] = 0.0
                             else:
+                                st.session_state[f"extra_bruto_{emp}"] = 0.0
                                 st.session_state[f"com_{emp}"] = 0.0
                                 st.session_state[f"ret_pub_{emp}"] = 0.0
 
@@ -277,6 +281,7 @@ elif menu_seleccionado == "Planillas":
                         st.session_state[f"mod_{emp}"] = "Porcentaje Directo (%)"
                         porc = st.slider(f"% Ganancia", 0, 100, int(st.session_state.get(f"porc_{emp}", info["porc"])), key=f"p_{emp}")
                         st.session_state[f"com_{emp}"] = st.session_state[f"serv_tot_{emp}"] * (porc / 100.0)
+                        st.session_state[f"extra_bruto_{emp}"] = 0.0
                         st.session_state[f"ret_pub_{emp}"] = 0.0
                         st.session_state[f"porc_{emp}"] = porc
                 else:
@@ -297,24 +302,26 @@ elif menu_seleccionado == "Planillas":
                 e_em = st.text_input(f"Correo", value=st.session_state[f"email_{emp}"], key=f"ui_e_{emp}")
                 st.session_state[f"email_{emp}"] = e_em
 
-            # REGLA NUEVA: Si es Operativo con Porcentaje Directo, Renta = 0. De lo contrario, 10% sobre base.
+            # Renta 10%
             mod_actual = st.session_state.get(f"mod_{emp}", info["mod"])
             if info["rol"] == "Operativo" and "Porcentaje" in mod_actual:
                 renta_calculada = 0.0
             else:
                 renta_calculada = st.session_state[f"base_{emp}"] * 0.10
 
+            extra_bruto_val = st.session_state.get(f"extra_bruto_{emp}", 0.0)
             ret_pub_actual = st.session_state.get(f"ret_pub_{emp}", 0.0)
             
-            t_net = st.session_state[f"base_{emp}"] + st.session_state[f"com_{emp}"] + st.session_state[f"hex_{emp}"] - renta_calculada - ret_pub_actual - st.session_state[f"desc_{emp}"]
+            t_net = st.session_state[f"base_{emp}"] + st.session_state[f"com_{emp}"] + st.session_state[f"hex_{emp}"] - renta_calculada - st.session_state[f"desc_{emp}"]
             
             datos_emp.append({
                 "Colaborador": emp, 
                 "Sueldo Base (Bruto)": st.session_state[f"base_{emp}"], 
-                "Comisiones": st.session_state[f"com_{emp}"], 
+                "Extra Bruto": extra_bruto_val,
+                "Retención Pub (25%)": ret_pub_actual,
+                "Comisiones Netas": st.session_state[f"com_{emp}"], 
                 "Bonos": st.session_state[f"hex_{emp}"], 
                 "Descuentos": st.session_state[f"desc_{emp}"], 
-                "Retención Pub (25%)": ret_pub_actual,
                 "10% Renta": renta_calculada, 
                 "Total a Pagar": t_net, 
                 "Email": st.session_state[f"email_{emp}"]
@@ -325,10 +332,11 @@ elif menu_seleccionado == "Planillas":
         st.markdown("<br><h4>Resumen Consolidado</h4>", unsafe_allow_html=True)
         st.dataframe(df_res.style.format({
             "Sueldo Base (Bruto)": "${:.2f}", 
-            "Comisiones": "${:.2f}", 
+            "Extra Bruto": "${:,.2f}",
+            "Retención Pub (25%)": "${:.2f}",
+            "Comisiones Netas": "${:.2f}", 
             "Bonos": "${:.2f}", 
             "Descuentos": "${:.2f}", 
-            "Retención Pub (25%)": "${:.2f}",
             "10% Renta": "${:.2f}", 
             "Total a Pagar": "${:.2f}"
         }), use_container_width=True, hide_index=True)
@@ -360,7 +368,7 @@ elif menu_seleccionado == "Planillas":
             pdf.cell(130, 8, ' Concepto', 1, 0, 'L', fill=True); pdf.cell(60, 8, ' Monto ($)', 1, 1, 'R', fill=True)
             pdf.set_font('helvetica', '', 10); pdf.set_text_color(50, 50, 50)
             
-            for d, v in [("Sueldo Base Acumulado (Bruto)", e_dat['Sueldo Base (Bruto)']), ("Comisiones Acumuladas", e_dat['Comisiones']), ("Bonos Extras", e_dat['Bonos'])]:
+            for d, v in [("Sueldo Base Acumulado (Bruto)", e_dat['Sueldo Base (Bruto)']), ("Extra Bruto Generado", e_dat['Extra Bruto']), ("Comisiones Netas a Pagar", e_dat['Comisiones']), ("Bonos Extras", e_dat['Bonos'])]:
                 pdf.cell(130, 8, f"  {d}", 1, 0, 'L'); pdf.cell(60, 8, f"${v:.2f}", 1, 1, 'R')
             
             pdf.set_text_color(201, 42, 42)
@@ -368,7 +376,7 @@ elif menu_seleccionado == "Planillas":
                 pdf.cell(130, 8, "  (-) Otros Descuentos", 1, 0, 'L'); pdf.cell(60, 8, f"-${e_dat['Descuentos']:.2f}", 1, 1, 'R')
             
             if e_dat['Retención Pub (25%)'] > 0:
-                pdf.cell(130, 8, "  (-) Retención 25% Publicidad", 1, 0, 'L'); pdf.cell(60, 8, f"-${e_dat['Retención Pub (25%)']:.2f}", 1, 1, 'R')
+                pdf.cell(130, 8, "  (Informativo) Retención 25% Publicidad", 1, 0, 'L'); pdf.cell(60, 8, f"${e_dat['Retención Pub (25%)']:.2f}", 1, 1, 'R')
             
             if e_dat['10% Renta'] > 0:
                 pdf.cell(130, 8, "  (-) 10% Retención de Renta", 1, 0, 'L'); pdf.cell(60, 8, f"-${e_dat['10% Renta']:.2f}", 1, 1, 'R')
@@ -422,6 +430,7 @@ elif menu_seleccionado == "Configuración":
             if n_nombre and n_alias:
                 st.session_state["empleados"][n_nombre] = {"rol": n_rol, "alias": n_alias.upper(), "mod": n_mod, "porc": n_porc}
                 st.session_state[f"com_{n_nombre}"] = 0.0
+                st.session_state[f"extra_bruto_{n_nombre}"] = 0.0
                 st.session_state[f"ret_pub_{n_nombre}"] = 0.0
                 st.session_state[f"serv_tot_{n_nombre}"] = 0.0
                 st.session_state[f"email_{n_nombre}"] = ""
@@ -432,7 +441,7 @@ elif menu_seleccionado == "Configuración":
                 st.rerun()
 
     with col_p2:
-        st.markdown("#### 🗑️ Baja de Colaborador")
+        st.markdown("#### 🗑️ Dar de Baja a Colaborador")
         e_elim = st.selectbox("Seleccionar colaborador:", list(st.session_state["empleados"].keys()))
         if st.button("❌ Eliminar"):
             del st.session_state["empleados"][e_elim]
