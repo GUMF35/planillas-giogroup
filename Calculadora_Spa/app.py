@@ -29,7 +29,7 @@ except:
 if "salario_operativo_neto" not in st.session_state: st.session_state["salario_operativo_neto"] = 183.96
 if "salario_directivo_neto" not in st.session_state: st.session_state["salario_directivo_neto"] = 300.00
 if "meses_multiplicador" not in st.session_state: st.session_state["meses_multiplicador"] = 1.0
-if "periodo_texto" not in st.session_state: st.session_state["periodo_texto"] = "1 Mes (Por defecto)"
+if "periodo_texto" not in st.session_state: st.session_state["periodo_texto"] = "1 Mes"
 
 if "empleados" not in st.session_state:
     st.session_state["empleados"] = {
@@ -115,7 +115,7 @@ with st.sidebar:
         menu_title="MÓDULOS DEL SISTEMA",
         options=["Dashboard", "Planillas", "Memorándums", "Amonestaciones", "Auditoría", "Configuración"],
         icons=["grid-1x2-fill", "wallet-fill", "envelope-paper-fill", "shield-fill-exclamation", "clock-fill", "gear-fill"],
-        menu_icon="cast", default_index=1,
+        menu_icon="cast", default_index=0,
         styles={
             "container": {"padding": "0!important", "background-color": "#0A192F"},
             "icon": {"color": "#94A3B8", "font-size": "16px"}, 
@@ -124,35 +124,13 @@ with st.sidebar:
         }
     )
 
-# --- 5. PANEL SUPERIOR: LECTOR DE PDF, AUTODETECCIÓN Y DEPURADOR ---
+# --- 5. PANEL SUPERIOR: LECTOR DE PDF Y AUTODETECCIÓN ---
 if menu_seleccionado != "Configuración":
     with st.container():
         st.markdown("<h2 style='color:#0F172A; font-weight:800;'>Bienvenido, Administración 👋</h2>", unsafe_allow_html=True)
-        st.info(f"📅 **Período detectado en PDF:** {st.session_state['periodo_texto']} | **Factor Multiplicador de Meses:** {st.session_state['meses_multiplicador']}x")
+        st.info(f"📅 **Período detectado en PDF:** {st.session_state['periodo_texto']} | **Multiplicador:** {st.session_state['meses_multiplicador']}")
         
-        col_up1, col_up2 = st.columns([3, 1])
-        with col_up1:
-            archivo_subido = st.file_uploader("📥 Sincronizar reporte de ventas (PDF)", type=["pdf"])
-        with col_up2:
-            st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("🗑️ Limpiar / Reiniciar Datos"):
-                st.session_state["total_ingresos_pdf"] = 0.0
-                st.session_state["ingresos_por_marca"] = {}
-                st.session_state["extras_por_marca"] = {}
-                st.session_state["total_fondo_publicidad"] = 0.0
-                st.session_state["meses_multiplicador"] = 1.0
-                st.session_state["periodo_texto"] = "1 Mes (Por defecto)"
-                for emp, info in st.session_state["empleados"].items():
-                    st.session_state[f"com_{emp}"] = 0.0
-                    st.session_state[f"extra_bruto_{emp}"] = 0.0
-                    st.session_state[f"ret_pub_{emp}"] = 0.0
-                    st.session_state[f"serv_tot_{emp}"] = 0.0
-                    if "Porcentaje" in info["mod"]:
-                        st.session_state[f"base_{emp}"] = 0.0
-                    else:
-                        st.session_state[f"base_{emp}"] = calcular_bruto_mensual(info["rol"])
-                st.success("¡Datos y caché depurados correctamente. Listo para nuevo archivo!")
-                st.rerun()
+        archivo_subido = st.file_uploader("📥 Sincronizar reporte de ventas (PDF)", type=["pdf"])
 
         if archivo_subido is not None:
             try:
@@ -177,12 +155,20 @@ if menu_seleccionado != "Configuración":
                     min_fecha = min(fechas_dt) if fechas_dt else datetime.now()
                     max_fecha = max(fechas_dt) if fechas_dt else datetime.now()
 
-                meses_diff = (max_fecha.year - min_fecha.year) * 12 + (max_fecha.month - min_fecha.month)
-                if max_fecha.day >= 15: meses_diff += 1
-                meses_diff = float(max(1, meses_diff))
+                dias_diff = (max_fecha - min_fecha).days + 1
+                if dias_diff <= 16:
+                    factor_mult = 0.5
+                    texto_periodo = f"Del {min_fecha.strftime('%d/%m/%Y')} al {max_fecha.strftime('%d/%m/%Y')} (1 Quincena)"
+                elif dias_diff <= 31:
+                    factor_mult = 1.0
+                    texto_periodo = f"Del {min_fecha.strftime('%d/%m/%Y')} al {max_fecha.strftime('%d/%m/%Y')} (1 Mes)"
+                else:
+                    factor_mult = float(round(dias_diff / 30.0))
+                    factor_mult = max(1.0, factor_mult)
+                    texto_periodo = f"Del {min_fecha.strftime('%d/%m/%Y')} al {max_fecha.strftime('%d/%m/%Y')} ({int(factor_mult)} meses)"
 
-                st.session_state["meses_multiplicador"] = meses_diff
-                st.session_state["periodo_texto"] = f"Del {min_fecha.strftime('%d/%m/%Y')} al {max_fecha.strftime('%d/%m/%Y')} ({int(meses_diff)} meses)"
+                st.session_state["meses_multiplicador"] = factor_mult
+                st.session_state["periodo_texto"] = texto_periodo
 
                 header_idx = -1
                 for i, row in enumerate(todas_las_filas):
@@ -250,7 +236,7 @@ if menu_seleccionado != "Configuración":
                                 st.session_state[f"com_{emp}"] = 0.0
                                 st.session_state[f"ret_pub_{emp}"] = 0.0
 
-                        st.success(f"✅ ¡PDF analizado! Período de {int(st.session_state['meses_multiplicador'])} meses procesado con éxito.")
+                        st.success(f"✅ ¡PDF analizado con éxito! Período detectado: {st.session_state['periodo_texto']}")
             except Exception as e:
                 st.error(f"Error procesando PDF: {e}")
 
@@ -259,6 +245,32 @@ if menu_seleccionado != "Configuración":
 # --- 6. ENRUTAMIENTO DE PÁGINAS ---
 
 if menu_seleccionado == "Dashboard":
+    st.markdown("<h2 style='color:#0F172A;'>Panel de Control General (Dashboard)</h2>", unsafe_allow_html=True)
+    
+    # Botón exclusivo de limpieza de datos en el Dashboard (preserva correos personales)
+    if st.button("🗑️ Limpiar / Reiniciar Datos del Sistema"):
+        st.session_state["total_ingresos_pdf"] = 0.0
+        st.session_state["ingresos_por_marca"] = {}
+        st.session_state["extras_por_marca"] = {}
+        st.session_state["total_fondo_publicidad"] = 0.0
+        st.session_state["meses_multiplicador"] = 1.0
+        st.session_state["periodo_texto"] = "1 Mes"
+        for emp, info in st.session_state["empleados"].items():
+            st.session_state[f"com_{emp}"] = 0.0
+            st.session_state[f"extra_bruto_{emp}"] = 0.0
+            st.session_state[f"ret_pub_{emp}"] = 0.0
+            st.session_state[f"serv_tot_{emp}"] = 0.0
+            st.session_state[f"hex_{emp}"] = 0.0
+            st.session_state[f"desc_{emp}"] = 0.0
+            if "Porcentaje" in info["mod"]:
+                st.session_state[f"base_{emp}"] = 0.0
+            else:
+                st.session_state[f"base_{emp}"] = calcular_bruto_mensual(info["rol"])
+        st.success("¡Datos y caché reiniciados correctamente desde el Dashboard (correos preservados)!")
+        st.rerun()
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
     if st.session_state["total_ingresos_pdf"] > 0:
         costo_planilla = sum([
             st.session_state[f"base_{emp}"] + st.session_state[f"com_{emp}"] + st.session_state[f"hex_{emp}"] - st.session_state[f"desc_{emp}"] - (0.0 if "Porcentaje" in st.session_state.get(f"mod_{emp}", st.session_state["empleados"][emp]["mod"]) and st.session_state["empleados"][emp]["rol"] == "Operativo" else st.session_state[f"base_{emp}"] * 0.10)
@@ -289,10 +301,28 @@ if menu_seleccionado == "Dashboard":
         with c_chart: st.bar_chart(pd.DataFrame.from_dict(marcas, orient='index', columns=['Ingresos Brutos ($)']))
         with c_table: st.dataframe(df_marcas.style.format({"Ingresos Brutos": "${:,.2f}", "Extras Brutos": "${:,.2f}", "NETO CLÍNICA": "${:,.2f}", "Meta Asignada": "${:,.2f}"}), hide_index=True)
     else:
-        st.info("Sube el PDF de ingresos para generar el reporte corporativo.")
+        st.info("Sube un reporte PDF en la parte superior para habilitar las métricas del Dashboard.")
 
 elif menu_seleccionado == "Planillas":
     st.markdown("<h2 style='color:#0F172A;'>Control Financiero de Planillas</h2>", unsafe_allow_html=True)
+    
+    # Botón depurador en Planillas (limpia bonos, descuentos y comisiones, preservando correos personales)
+    if st.button("🗑️ Limpiar / Reiniciar Datos de Planilla"):
+        for emp, info in st.session_state["empleados"].items():
+            st.session_state[f"com_{emp}"] = 0.0
+            st.session_state[f"extra_bruto_{emp}"] = 0.0
+            st.session_state[f"ret_pub_{emp}"] = 0.0
+            st.session_state[f"serv_tot_{emp}"] = 0.0
+            st.session_state[f"hex_{emp}"] = 0.0
+            st.session_state[f"desc_{emp}"] = 0.0
+            if "Porcentaje" in info["mod"]:
+                st.session_state[f"base_{emp}"] = 0.0
+            else:
+                st.session_state[f"base_{emp}"] = calcular_bruto_mensual(info["rol"]) * st.session_state["meses_multiplicador"]
+        st.success("¡Datos de planilla limpiados correctamente (correos electrónicos preservados)!")
+        st.rerun()
+
+    st.markdown("<br>", unsafe_allow_html=True)
     datos_emp = []
 
     for emp, info in st.session_state["empleados"].items():
@@ -424,7 +454,6 @@ elif menu_seleccionado == "Planillas":
         if 't_pdf' in st.session_state:
             st.download_button("📄 Descargar Recibo PDF", data=st.session_state['t_pdf'], file_name=st.session_state['t_path'], mime="application/pdf")
             
-            # --- ENVÍO AUTOMÁTICO POR GMAIL (SMTP) ---
             if st.button("🚀 Enviar Recibo por Gmail al Colaborador"):
                 try:
                     remitente = st.secrets["EMAIL_USER"]
@@ -434,14 +463,23 @@ elif menu_seleccionado == "Planillas":
                     msg = MIMEMultipart()
                     msg['From'] = remitente
                     msg['To'] = destinatario
-                    msg['Subject'] = f"Comprobante Oficial de Pago - {e_dat['Colaborador']} (Gio Group)"
+                    msg['Subject'] = f"Comprobante Oficial de Pago - Período: {st.session_state['periodo_texto']} | GIO GROUP"
                     
                     cuerpo_correo = f"""Estimado/a {e_dat['Colaborador']},
 
-Adjunto a este correo encontrará su comprobante oficial de pago correspondiente al periodo: {st.session_state['periodo_texto']}.
+Es un placer saludarle de parte de la Dirección Administrativa de GIO GROUP SAS DE CV.
 
-Atentamente,
-Administración - Gio Group SAS de CV"""
+Adjunto a este correo electrónico encontrará su Comprobante Oficial de Pago detallado, correspondiente al período liquidado del {st.session_state['periodo_texto']}. Le invitamos a revisar minuciosamente el desglose de su sueldo base, comisiones netas, retenciones e incentivos aplicados en este ciclo.
+
+Agradecemos profundamente su valiosa labor, dedicación y compromiso continuo con el crecimiento y la excelencia de nuestras marcas y clínicas. Su esfuerzo diario es un pilar fundamental para nuestra organización.
+
+Si tuviese alguna consulta técnica, aclaración sobre el cálculo o inquietud respecto a su comprobante, por favor no dude en comunicarse directamente con el departamento de Administración.
+
+Atentamente y con los mejores deseos,
+
+Departamento de Administración y Recursos Humanos
+GIO GROUP SAS DE CV
+"""
                     
                     msg.attach(MIMEText(cuerpo_correo, 'plain'))
                     
@@ -461,12 +499,57 @@ Administración - Gio Group SAS de CV"""
                         "Tipo Documento": "Recibo de Pago", 
                         "Destinatario": e_sel
                     })
-                    st.success(f"¡Comprobante enviado exitosamente por Gmail a {destinatario}!")
+                    st.success(f"¡Comprobante enviado exitosamente por Gmail con formato corporativo a {destinatario}!")
                 except Exception as ex:
-                    st.error(f"Error al enviar el correo mediante Gmail. Verifique sus secretos (EMAIL_USER y EMAIL_PASS): {ex}")
+                    st.error(f"Error al enviar el correo mediante Gmail. Verifique sus secretos en Streamlit Cloud (EMAIL_USER y EMAIL_PASS): {ex}")
 
-elif menu_seleccionado in ["Memorándums", "Amonestaciones", "Auditoría"]:
-    st.info(f"Módulo: {menu_seleccionado} (Funcionando correctamente en backend)")
+elif menu_seleccionado == "Memorándums":
+    st.markdown("<h2 style='color:#0F172A;'>📝 Emisión de Memorándums Internos</h2>", unsafe_allow_html=True)
+    emp_memo = st.selectbox("Destinatario del Memorándum:", list(st.session_state["empleados"].keys()))
+    asunto_memo = st.text_input("Asunto a tratar:", value="Aviso Administrativo Oficial")
+    texto_memo = st.text_area("Cuerpo o notas del Memorándum:")
+    
+    if st.button("👁️ Generar PDF Oficial"):
+        if texto_memo:
+            class PDFMemo(FPDF):
+                def header(self):
+                    if os.path.exists(logo_path): self.image(logo_path, 10, 8, 25); self.set_x(40)
+                    self.set_font('helvetica', 'B', 16); self.set_text_color(10, 25, 47); self.cell(0, 10, 'GIO GROUP SAS DE CV', 0, 1, 'L'); self.ln(5)
+            pdf_m = PDFMemo(); pdf_m.add_page(); pdf_m.set_font('helvetica', 'B', 11)
+            pdf_m.cell(0, 10, f" Entregado a: {emp_memo}", 0, 1, 'L'); pdf_m.cell(0, 10, f" Asunto Central: {asunto_memo}", 0, 1, 'L')
+            pdf_m.set_font('helvetica', '', 11); pdf_m.multi_cell(0, 7, texto_memo, 0, 'L')
+            m_path = f"Memorandum_{emp_memo.replace(' ','_')}.pdf"; pdf_m.output(m_path)
+            with open(m_path, "rb") as f: st.session_state['temp_memo_pdf'] = f.read(); st.session_state['temp_memo_path'] = m_path
+
+    if 'temp_memo_pdf' in st.session_state:
+        st.download_button("📄 Descargar Archivo PDF", data=st.session_state['temp_memo_pdf'], file_name=st.session_state['temp_memo_path'])
+
+elif menu_seleccionado == "Amonestaciones":
+    st.markdown("<h2 style='color:#0F172A;'>⚠️ Registro de Faltas y Amonestaciones</h2>", unsafe_allow_html=True)
+    emp_amon = st.selectbox("Colaborador involucrado:", list(st.session_state["empleados"].keys()))
+    tipo_falta = st.selectbox("Gravedad de la Falta:", ["Llamada de Atención Verbal", "Amonestación Escrita Leve", "Amonestación Escrita Grave"])
+    motivo_amon = st.text_area("Detalles completos del incidente:")
+    
+    if st.button("👁️ Redactar Acta PDF"):
+        if motivo_amon:
+            class PDFAmon(FPDF):
+                def header(self):
+                    if os.path.exists(logo_path): self.image(logo_path, 10, 8, 25); self.set_x(40)
+                    self.set_font('helvetica', 'B', 16); self.set_text_color(201, 42, 42); self.cell(0, 10, 'GIO GROUP SAS DE CV', 0, 1, 'L'); self.ln(5)
+            pdf_a = PDFAmon(); pdf_a.add_page(); pdf_a.set_font('helvetica', 'B', 11)
+            pdf_a.cell(0, 10, f" Dirigido a: {emp_amon}", 0, 1, 'L'); pdf_a.multi_cell(0, 7, motivo_amon, 1, 'L')
+            a_path = f"Acta_Amonestacion_{emp_amon.replace(' ','_')}.pdf"; pdf_a.output(a_path)
+            with open(a_path, "rb") as f: st.session_state['temp_amon_pdf'] = f.read(); st.session_state['temp_amon_path'] = a_path
+
+    if 'temp_amon_pdf' in st.session_state:
+        st.download_button("📄 Descargar Acta Formal", data=st.session_state['temp_amon_pdf'], file_name=st.session_state['temp_amon_path'])
+
+elif menu_seleccionado == "Auditoría":
+    st.markdown("<h2 style='color:#0F172A;'>🖨️ Registro y Control de Auditoría</h2>", unsafe_allow_html=True)
+    if st.session_state["historial_auditoria"]:
+        st.dataframe(pd.DataFrame(st.session_state["historial_auditoria"]), use_container_width=True)
+    else:
+        st.info("El registro está limpio. No se han detectado acciones recientes.")
 
 elif menu_seleccionado == "Configuración":
     st.markdown("<h2 style='color:#0F172A;'>⚙️ Configuración del Sistema (Admin)</h2>", unsafe_allow_html=True)
@@ -483,7 +566,7 @@ elif menu_seleccionado == "Configuración":
     c_t1, c_t2 = st.columns(2)
     with c_t1: st.text_input("Periodo Detectado Actual:", value=st.session_state["periodo_texto"], disabled=True)
     with c_t2: 
-        meses_manual = st.number_input("Multiplicador Manual (Meses):", value=float(st.session_state["meses_multiplicador"]), step=1.0)
+        meses_manual = st.number_input("Multiplicador Manual (Factor):", value=float(st.session_state["meses_multiplicador"]), step=0.5)
         if st.button("Aplicar Multiplicador Manual"):
             st.session_state["meses_multiplicador"] = float(meses_manual)
             for emp, info in st.session_state["empleados"].items():
