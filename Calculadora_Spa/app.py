@@ -27,11 +27,13 @@ except:
 # --- 2. CSS AVANZADO: TEMA "GLINT" BLINDADO ---
 estilo_glint = """
 <style>
-    /* Ocultar elementos de Streamlit */
+    /* Ocultar elementos molestos pero DEJAR EL HEADER PARA EL MENÚ */
     #MainMenu {visibility: hidden;}
-    header {visibility: hidden;}
     footer {visibility: hidden;}
     .stDeployButton {display:none;}
+    
+    /* Hacer transparente el header para que no arruine el diseño pero mantenga el botón del menú visible */
+    header {background-color: transparent !important;}
     
     /* Fondo Global de la App */
     .stApp {
@@ -117,7 +119,7 @@ with st.sidebar:
     
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # Menú estilo Glint (El color #00C4B5 simula el Cyan del logo Gio, puedes cambiarlo a #F5C518 si prefieres el amarillo Glint puro)
+    # Menú 100% en español
     menu_seleccionado = option_menu(
         menu_title="MÓDULOS DEL SISTEMA",
         options=["Dashboard", "Planillas", "Memorándums", "Amonestaciones", "Auditoría"],
@@ -243,8 +245,7 @@ with st.container():
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# --- 5. ENRUTAMIENTO DE VISTAS (PÁGINAS) ---
-# Al hacer clic en el menú lateral, se mostrará el contenido correspondiente aquí
+# --- 5. ENRUTAMIENTO DE VISTAS (PÁGINAS 100% ESPAÑOL) ---
 
 if menu_seleccionado == "Dashboard":
     
@@ -254,7 +255,7 @@ if menu_seleccionado == "Dashboard":
         costo_planilla = sum([st.session_state[f"base_{emp}"] + st.session_state[f"com_{emp}"] + st.session_state[f"hex_{emp}"] - st.session_state[f"desc_{emp}"] for emp in empleados_lista])
         utilidad_neta = st.session_state["total_ingresos_pdf"] - costo_planilla
 
-        # KPIs Estilo SaaS
+        # KPIs Corporativos
         col1, col2, col3 = st.columns(3)
         col1.metric("💰 Ingresos Brutos Totales", f"${st.session_state['total_ingresos_pdf']:,.2f}")
         col2.metric("💸 Costo Operativo (Planillas)", f"${costo_planilla:,.2f}")
@@ -373,7 +374,7 @@ elif menu_seleccionado == "Memorándums":
     emp_memo = st.selectbox("Destinatario del Memorándum:", empleados_lista)
     asunto_memo = st.text_input("Asunto a tratar:", value="Aviso Administrativo Oficial")
     texto_memo = st.text_area("Cuerpo o notas del Memorándum:")
-    email_memo = st.text_input("Correo destinatario:", value=st.session_state[f"email_{emp_memo}"])
+    email_memo = st.text_input("Correo destinatario:", value=st.session_state.get(f"email_{emp_memo}", ""))
 
     if st.button("👁️ Generar PDF Oficial"):
         if texto_memo:
