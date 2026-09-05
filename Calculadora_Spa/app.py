@@ -41,7 +41,6 @@ if "empleados" not in st.session_state:
         "Mario de Paz": {"rol": "Directivo", "alias": "MARIO"}
     }
 
-# Inicializar variables para todos los empleados activos
 for emp in st.session_state["empleados"].keys():
     if f"com_{emp}" not in st.session_state: st.session_state[f"com_{emp}"] = 0.0
     if f"serv_tot_{emp}" not in st.session_state: st.session_state[f"serv_tot_{emp}"] = 0.0
@@ -51,23 +50,19 @@ for emp in st.session_state["empleados"].keys():
 
 if "historial_auditoria" not in st.session_state: st.session_state["historial_auditoria"] = []
 if "ingresos_por_marca" not in st.session_state: st.session_state["ingresos_por_marca"] = {}
+if "extras_por_marca" not in st.session_state: st.session_state["extras_por_marca"] = {}
 if "total_ingresos_pdf" not in st.session_state: st.session_state["total_ingresos_pdf"] = 0.0
 
-# --- 3. CSS AVANZADO: TEMA "AZUL MARINO CORPORATIVO" + LIMPIEZA VISUAL ---
+# --- 3. CSS AVANZADO: TEMA "AZUL MARINO CORPORATIVO" ---
 estilo_azul = """
 <style>
-    /* OCULTAR ELEMENTOS MOLESTOS (HEADER, FOOTER, MANAGE APP, FLECHAS SIDEBAR) */
     [data-testid="stHeader"] {display: none !important;}
     footer {display: none !important;}
     .viewerBadge_container, .stDeployButton, #Manage-app {display: none !important;}
     [data-testid="stSidebarCollapseButton"] {display: none !important;}
     
-    /* Fondo Global de la App */
-    .stApp {
-        background-color: #F3F4F6 !important;
-    }
+    .stApp { background-color: #F3F4F6 !important; }
     
-    /* WIDGETS Y TARJETAS BLANCAS (Glassmorphism) */
     [data-testid="stMetric"], div[data-testid="metric-container"], .stDataFrame, [data-testid="stExpander"] {
         background-color: #FFFFFF !important;
         border-radius: 12px !important;
@@ -76,34 +71,14 @@ estilo_azul = """
         border: 1px solid #E5E7EB !important;
     }
     
-    /* Acento Azul Rey en las Tarjetas de Métricas */
-    [data-testid="stMetric"] {
-        border-bottom: 4px solid #2563EB !important; 
-    }
-    [data-testid="stMetricLabel"] {
-        color: #64748B !important;
-        font-weight: 600 !important;
-        font-size: 1.05rem !important;
-    }
-    [data-testid="stMetricValue"] {
-        color: #0F172A !important;
-        font-weight: 800 !important;
-        font-size: 1.8rem !important;
-    }
+    [data-testid="stMetric"] { border-bottom: 4px solid #2563EB !important; }
+    [data-testid="stMetricLabel"] { color: #64748B !important; font-weight: 600 !important; font-size: 1.05rem !important; }
+    [data-testid="stMetricValue"] { color: #0F172A !important; font-weight: 800 !important; font-size: 1.8rem !important; }
 
-    /* FORZAR SIDEBAR A AZUL MARINO PROFUNDO */
-    [data-testid="stSidebar"] {
-        background-color: #0A192F !important;
-        border-right: none !important;
-    }
-    [data-testid="stSidebar"] p, [data-testid="stSidebar"] span, [data-testid="stSidebar"] label {
-        color: #94A3B8 !important;
-    }
-    [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
-        color: #FFFFFF !important;
-    }
+    [data-testid="stSidebar"] { background-color: #0A192F !important; border-right: none !important; }
+    [data-testid="stSidebar"] p, [data-testid="stSidebar"] span, [data-testid="stSidebar"] label { color: #94A3B8 !important; }
+    [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 { color: #FFFFFF !important; }
 
-    /* Diseño de Botones Principales */
     div.stButton > button:first-child {
         background-color: #0A192F !important;
         color: #FFFFFF !important;
@@ -114,19 +89,14 @@ estilo_azul = """
         transition: all 0.3s ease !important;
     }
     div.stButton > button:first-child:hover {
-        background-color: #2563EB !important; /* Acento Azul Rey */
+        background-color: #2563EB !important; 
         color: #FFFFFF !important;
         transform: translateY(-2px);
         box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3) !important;
     }
     
-    /* Títulos limpios */
-    h1, h2, h3 {
-        color: #0F172A !important;
-        font-weight: 800 !important;
-    }
+    h1, h2, h3 { color: #0F172A !important; font-weight: 800 !important; }
     
-    /* Inputs */
     .stTextInput input, .stNumberInput input, .stSelectbox div[data-baseweb="select"], .stTextArea textarea {
         background-color: #F8FAFC !important;
         border-radius: 8px !important;
@@ -137,7 +107,7 @@ estilo_azul = """
 """
 st.markdown(estilo_azul, unsafe_allow_html=True)
 
-# --- 4. MENÚ LATERAL INTERACTIVO (AZUL MARINO) ---
+# --- 4. MENÚ LATERAL INTERACTIVO ---
 with st.sidebar:
     st.markdown("<br>", unsafe_allow_html=True)
     if os.path.exists(logo_path):
@@ -157,25 +127,17 @@ with st.sidebar:
             "container": {"padding": "0!important", "background-color": "#0A192F"},
             "icon": {"color": "#94A3B8", "font-size": "16px"}, 
             "nav-link": {
-                "font-size": "14px", 
-                "text-align": "left", 
-                "margin":"4px 0px", 
-                "padding": "10px 15px",
-                "color": "#94A3B8", 
-                "border-radius": "0px",
-                "--hover-color": "#112240"
+                "font-size": "14px", "text-align": "left", "margin":"4px 0px", "padding": "10px 15px",
+                "color": "#94A3B8", "border-radius": "0px", "--hover-color": "#112240"
             },
             "nav-link-selected": {
-                "background-color": "#112240", 
-                "color": "#3B82F6", 
-                "font-weight": "bold",
-                "border-left": "4px solid #3B82F6"
+                "background-color": "#112240", "color": "#3B82F6", "font-weight": "bold", "border-left": "4px solid #3B82F6"
             },
             "menu-title": {"color": "#475569", "font-size": "11px", "font-weight": "bold", "letter-spacing": "1px", "padding-left": "15px"}
         }
     )
 
-# --- 5. PANEL SUPERIOR: LECTOR DE PDF ---
+# --- 5. PANEL SUPERIOR: LECTOR DE PDF CON EXTRAS POR MARCA ---
 if menu_seleccionado != "Configuración":
     with st.container():
         st.markdown("<h2 style='color:#0F172A; font-weight:800;'>Bienvenido, Administración 👋</h2>", unsafe_allow_html=True)
@@ -208,6 +170,7 @@ if menu_seleccionado != "Configuración":
 
                         st.session_state["total_ingresos_pdf"] = df_reporte[col_precio].sum()
 
+                        # 1. Asignar Marca a cada servicio
                         def asignar_marca(profesional):
                             p = str(profesional).upper()
                             if "MAYDELY" in p or "JESSICA" in p: return "Papi Spa"
@@ -218,6 +181,17 @@ if menu_seleccionado != "Configuración":
                         df_reporte['MARCA'] = df_reporte[col_prof].apply(asignar_marca)
                         st.session_state["ingresos_por_marca"] = df_reporte.groupby('MARCA')[col_precio].sum().to_dict()
 
+                        # 2. Calcular los EXTRAS brutos por Marca (Regla: Dr. Gio no genera extras)
+                        def calcular_extra_marca(row):
+                            if row['MARCA'] == "Dr. Gio Molina":
+                                return 0.0
+                            precio = float(row[col_precio])
+                            return max(0.0, precio - 60.0)
+
+                        df_reporte['EXTRA_BRUTO'] = df_reporte.apply(calcular_extra_marca, axis=1)
+                        st.session_state["extras_por_marca"] = df_reporte.groupby('MARCA')['EXTRA_BRUTO'].sum().to_dict()
+
+                        # 3. Asignación a Planillas de Empleados
                         def procesar_empleado(clave):
                             df_p = df_reporte[df_reporte[col_prof].astype(str).str.contains(clave, case=False, na=False, regex=True)]
                             tot_serv = df_p[col_precio].sum()
@@ -237,7 +211,7 @@ if menu_seleccionado != "Configuración":
                             else:
                                 st.session_state[f"com_{emp}"] = 0.0
 
-                        st.success("✅ Sincronización exitosa. Los datos se han actualizado en todos los módulos.")
+                        st.success("✅ Sincronización exitosa. Datos de Holding y extras calculados al detalle.")
             except Exception as e:
                 st.error(f"Error al leer el documento PDF: {e}")
 
@@ -246,10 +220,9 @@ if menu_seleccionado != "Configuración":
 # --- 6. ENRUTAMIENTO DE PÁGINAS ---
 
 if menu_seleccionado == "Dashboard":
-    meta_minima = 300.0 # Meta base estándar
+    meta_minima = 300.0 
     
     if st.session_state["total_ingresos_pdf"] > 0:
-        # Calcular nómina sumando la base correspondiente al rol de cada empleado activo
         costo_planilla = sum([
             (st.session_state["salario_operativo"] if st.session_state["empleados"][emp]["rol"] == "Operativo" else st.session_state["salario_directivo"]) 
             + st.session_state[f"com_{emp}"] + st.session_state[f"hex_{emp}"] - st.session_state[f"desc_{emp}"] 
@@ -257,7 +230,6 @@ if menu_seleccionado == "Dashboard":
         ])
         utilidad_neta = st.session_state["total_ingresos_pdf"] - costo_planilla
 
-        # KPIs Corporativos
         col1, col2, col3 = st.columns(3)
         col1.metric("💰 Ingresos Brutos Totales", f"${st.session_state['total_ingresos_pdf']:,.2f}")
         col2.metric("💸 Costo Operativo (Planillas)", f"${costo_planilla:,.2f}")
@@ -265,6 +237,7 @@ if menu_seleccionado == "Dashboard":
 
         st.markdown("<br><h3 style='color:#0F172A;'>🎯 Rendimiento de Marcas (Holding)</h3>", unsafe_allow_html=True)
         marcas = st.session_state["ingresos_por_marca"]
+        extras_marcas = st.session_state.get("extras_por_marca", {})
         cols_metas = st.columns(len(marcas) if len(marcas) > 0 else 1)
         metas_config = {}
         
@@ -272,11 +245,23 @@ if menu_seleccionado == "Dashboard":
             meta_def = 8000.0 if "Dr" in marca else 5000.0
             metas_config[marca] = cols_metas[i].number_input(f"Meta: {marca}", value=meta_def, step=500.0, key=f"meta_{marca}")
 
-        df_marcas = pd.DataFrame([{"Empresa/Marca": m, "Ingresos Generados": ing, "Meta Asignada": metas_config[m], "Estado": "✅ Alcanzada" if ing >= metas_config[m] else "⚠️ Pendiente"} for m, ing in marcas.items()])
+        # NUEVO: Tabla actualizada con la columna de Extras (Brutos)
+        df_marcas = pd.DataFrame([{
+            "Empresa/Marca": m, 
+            "Ingresos Generados": ing, 
+            "Extras (Brutos)": extras_marcas.get(m, 0.0),
+            "Meta Asignada": metas_config[m], 
+            "Estado": "✅ Alcanzada" if ing >= metas_config[m] else "⚠️ Pendiente"
+        } for m, ing in marcas.items()])
         
-        c_chart, c_table = st.columns([2, 1])
+        c_chart, c_table = st.columns([2, 2])
         with c_chart: st.bar_chart(pd.DataFrame.from_dict(marcas, orient='index', columns=['Ingresos ($)']))
-        with c_table: st.dataframe(df_marcas.style.format({"Ingresos Generados": "${:,.2f}", "Meta Asignada": "${:,.2f}"}), hide_index=True)
+        with c_table: 
+            st.dataframe(df_marcas.style.format({
+                "Ingresos Generados": "${:,.2f}", 
+                "Extras (Brutos)": "${:,.2f}",
+                "Meta Asignada": "${:,.2f}"
+            }), hide_index=True)
 
         st.markdown("<br><h3 style='color:#0F172A;'>⭐ Rendimiento del Personal Activo</h3>", unsafe_allow_html=True)
         metricas = [{"Colaborador": e, "Rol": st.session_state["empleados"][e]["rol"], "Total Generado ($)": st.session_state[f"serv_tot_{e}"], "Estado": "✅ Cumple" if st.session_state[f"serv_tot_{e}"] >= meta_minima else "En progreso"} for e in st.session_state["empleados"].keys()]
@@ -293,7 +278,6 @@ elif menu_seleccionado == "Planillas":
         with st.expander(f"👤 {emp} ({info['rol']})"):
             c1, c2, c3 = st.columns(3)
             mod_str = "Estándar"
-            
             sueldo_base_defecto = st.session_state["salario_operativo"] if info["rol"] == "Operativo" else st.session_state["salario_directivo"]
 
             with c1:
@@ -430,18 +414,17 @@ elif menu_seleccionado == "Configuración":
         st.markdown("#### ✨ Agregar Nuevo Colaborador")
         nuevo_nombre = st.text_input("Nombre Completo:")
         nuevo_rol = st.selectbox("Rol en la Empresa:", ["Operativo", "Directivo"])
-        nuevo_alias = st.text_input("Alias en el PDF (Ej. MARIA|MAR):", help="Palabra clave con la que el sistema lo buscará en el reporte de ingresos.")
+        nuevo_alias = st.text_input("Alias en el PDF (Ej. MARIA|MAR):", help="Palabra clave para el reporte de ingresos.")
         
         if st.button("➕ Dar de Alta en Sistema"):
             if nuevo_nombre and nuevo_alias:
                 st.session_state["empleados"][nuevo_nombre] = {"rol": nuevo_rol, "alias": nuevo_alias.upper()}
-                # Inicializar sus variables
                 st.session_state[f"com_{nuevo_nombre}"] = 0.0
                 st.session_state[f"serv_tot_{nuevo_nombre}"] = 0.0
                 st.session_state[f"email_{nuevo_nombre}"] = ""
                 st.session_state[f"hex_{nuevo_nombre}"] = 0.0
                 st.session_state[f"desc_{nuevo_nombre}"] = 0.0
-                st.success(f"{nuevo_nombre} ha sido agregado exitosamente a la planilla.")
+                st.success(f"{nuevo_nombre} ha sido agregado exitosamente.")
                 st.rerun()
             else:
                 st.error("Por favor completa el nombre y el alias.")
@@ -453,7 +436,7 @@ elif menu_seleccionado == "Configuración":
         if st.button("❌ Eliminar del Sistema"):
             if emp_a_eliminar:
                 del st.session_state["empleados"][emp_a_eliminar]
-                st.warning(f"{emp_a_eliminar} ha sido dado de baja. Ya no aparecerá en planillas ni reportes.")
+                st.warning(f"{emp_a_eliminar} ha sido dado de baja.")
                 st.rerun()
 
     st.markdown("#### 📋 Personal Activo Actualmente")
