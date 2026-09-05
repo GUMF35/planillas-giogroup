@@ -298,7 +298,6 @@ with tab_planillas:
                 pdf_path = f"Recibo_{emp_sel_planilla.replace(' ', '_')}.pdf"
                 pdf.output(pdf_path)
 
-                # Envío correo
                 remitente_email = st.secrets["EMAIL_USER"]
                 password_email = st.secrets["EMAIL_PASS"]
                 msg = MIMEMultipart()
@@ -485,7 +484,6 @@ with tab_metas:
     if archivo_subido is not None and df_reporte is not None:
         metricas_lista = []
         for emp in empleados_lista:
-            nombre_corto = emp.split()[0]
             tot_serv = st.session_state.get(f"serv_tot_{emp}", 0.0)
             cumplio = "✅ Cumplida" if tot_serv >= meta_minima else "⚠️ No Cumplida"
             
@@ -522,7 +520,7 @@ with tab_metas:
                 cuerpo = f"""Estimado/a {emp_meta_sel},
 
 Aquí tienes tu resumen de rendimiento del periodo actual:
-- Total de Servicios Realizados: ${datos_emp_sel['Total Services Vendidos ($)'] if 'Total Services Vendidos ($)' in datos_emp_sel else datos_emp_sel['Total Servicios Vendidos ($)']:.2f}
+- Total de Servicios Realizados: ${datos_emp_sel['Total Servicios Vendidos ($)']:.2f}
 - Meta Requerida: ${datos_emp_sel['Meta Establecida ($)']:.2f}
 - Estado: {datos_emp_sel['Estado']}
 
@@ -542,8 +540,3 @@ Gerencia - Gio Group SAS de CV"""
                 st.error(f"Error al enviar correo de metas: {e}")
     else:
         st.info("ℹ️ Sube un reporte de ingresos en PDF en la parte superior para habilitar el análisis automático de metas.")
-
-            st.success(f"¡Recibo en PDF generado y enviado con éxito a {emp_data['Email']}!")
-
-        except Exception as ex:
-            st.error(f"Error al generar o enviar el recibo: {ex}")
