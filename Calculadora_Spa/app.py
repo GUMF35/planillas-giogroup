@@ -36,7 +36,7 @@ if "empleados" not in st.session_state:
         "Maydely Hernández": {"rol": "Operativo", "alias": "MAYDELY", "mod": "Porcentaje Directo (%)", "porc": 20},
         "Luis Violante": {"rol": "Operativo", "alias": "LUIS", "mod": "Porcentaje Directo (%)", "porc": 20},
         "Jessica Lemus": {"rol": "Operativo", "alias": "JESSICA", "mod": "Porcentaje Directo (%)", "porc": 20},
-        "Mario de Paz": {"rol": "Operativo", "alias": "MARIO", "mod": "Porcentaje Directo (%)", "porc": 20}, # ¡Mario ahora es Operativo igual que Maydely!
+        "Mario de Paz": {"rol": "Operativo", "alias": "MARIO", "mod": "Porcentaje Directo (%)", "porc": 20},
         "Dr. Gio Molina": {"rol": "Administrativo", "alias": "GIO|MARVIN|DOCTOR", "mod": "Fijo", "porc": 0},
         "Gerson Ulises Molina Flores": {"rol": "Administrativo", "alias": "GERSON", "mod": "Fijo", "porc": 0},
         "Edwin Ponce": {"rol": "Administrativo", "alias": "EDWIN", "mod": "Fijo", "porc": 0}
@@ -134,7 +134,6 @@ if menu_seleccionado != "Configuración":
                         tabla = page.extract_table()
                         if tabla: todas_las_filas.extend(tabla)
                 
-                # Autodetección de fechas ISO o diagonales
                 fechas_iso = re.findall(r'\b20\d{2}-\d{2}-\d{2}\b', texto_completo)
                 if len(fechas_iso) >= 2:
                     min_fecha = datetime.strptime(fechas_iso[0], '%Y-%m-%d')
@@ -175,7 +174,7 @@ if menu_seleccionado != "Configuración":
 
                         def asignar_marca(profesional):
                             p = str(profesional).upper()
-                            if "MAYDELY" in p or "JESSICA" in p or "MARIO" in p: return "Papi Spa" # Mario atiende en spa/masajes
+                            if "MAYDELY" in p or "JESSICA" in p or "MARIO" in p: return "Papi Spa"
                             if "LUIS" in p: return "Relájate Man"
                             if "GIO" in p or "MARVIN" in p or "DOCTOR" in p: return "Dr. Gio Molina"
                             return "Relájate Clinic"
@@ -267,10 +266,9 @@ elif menu_seleccionado == "Planillas":
                     if "Porcentaje" in mod:
                         porc = st.slider(f"% Ganancia", 0, 100, st.session_state.get(f"porc_{emp}", info["porc"]), key=f"p_{emp}")
                         st.session_state[f"mod_{emp}"] = "Porcentaje Directo (%)"
-                        if porc != st.session_state.get(f"porc_val_{emp}", info["porc"]):
-                            st.session_state[f"com_{emp}"] = st.session_state[f"serv_tot_{emp}"] * (porc / 100.0)
-                            st.session_state[f"porc_{emp}"] = porc
-                            st.session_state[f"porc_val_{emp}"] = porc
+                        # Cálculo inmediato basado en el total de servicios ya escaneados del PDF
+                        st.session_state[f"com_{emp}"] = st.session_state[f"serv_tot_{emp}"] * (porc / 100.0)
+                        st.session_state[f"porc_{emp}"] = porc
                     else:
                         st.session_state[f"mod_{emp}"] = "Estándar"
                 else:
@@ -291,7 +289,6 @@ elif menu_seleccionado == "Planillas":
                 e_em = st.text_input(f"Correo", value=st.session_state[f"email_{emp}"], key=f"ui_e_{emp}")
                 st.session_state[f"email_{emp}"] = e_em
 
-            # Renta 10% exclusivamente sobre el sueldo base bruto acumulado
             renta_calculada = st.session_state[f"base_{emp}"] * 0.10
             t_net = st.session_state[f"base_{emp}"] + st.session_state[f"com_{emp}"] + st.session_state[f"hex_{emp}"] - renta_calculada - st.session_state[f"desc_{emp}"]
             
