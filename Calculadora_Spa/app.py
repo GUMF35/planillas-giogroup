@@ -33,11 +33,11 @@ try:
 except Exception:
     st.set_page_config(page_title="Gio Group Admin", page_icon="🏢", layout="wide")
 
-# --- 2. BASE DE DATOS EN MEMORIA (ROLES Y CONFIGURACIÓN EXACTA) ---
-if "salario_operativo_neto" not in st.session_state: st.session_state["salario_operativo_neto"] = 183.96
-if "salario_directivo_neto" not in st.session_state: st.session_state["salario_directivo_neto"] = 600.00 # $300 quincenal = $600 mensual neto
-if "meses_multiplicador" not in st.session_state: st.session_state["meses_multiplicador"] = 1.0
-if "periodo_texto" not in st.session_state: st.session_state["periodo_texto"] = "1 Mes"
+# --- 2. BASE DE DATOS EN MEMORIA (AHORA BASADO EN QUINCENAS) ---
+if "salario_operativo_neto" not in st.session_state: st.session_state["salario_operativo_neto"] = 183.96 # POR QUINCENA
+if "salario_directivo_neto" not in st.session_state: st.session_state["salario_directivo_neto"] = 300.00 # POR QUINCENA
+if "quincenas_multiplicador" not in st.session_state: st.session_state["quincenas_multiplicador"] = 1.0
+if "periodo_texto" not in st.session_state: st.session_state["periodo_texto"] = "1 Quincena"
 
 if "empleados" not in st.session_state:
     st.session_state["empleados"] = {
@@ -50,7 +50,7 @@ if "empleados" not in st.session_state:
         "Edwin Ponce": {"rol": "Administrativo", "alias": "EDWIN", "mod": "Fijo", "porc": 0}
     }
 
-def calcular_bruto_mensual(rol):
+def calcular_bruto_base(rol):
     neto = st.session_state["salario_operativo_neto"] if rol == "Operativo" else st.session_state["salario_directivo_neto"]
     return round(neto / 0.90, 2)
 
@@ -69,7 +69,7 @@ for emp, info in st.session_state["empleados"].items():
         if f"base_{emp}" not in st.session_state: st.session_state[f"base_{emp}"] = 0.0
     else:
         if f"base_{emp}" not in st.session_state: 
-            st.session_state[f"base_{emp}"] = calcular_bruto_mensual(info["rol"]) * st.session_state["meses_multiplicador"]
+            st.session_state[f"base_{emp}"] = calcular_bruto_base(info["rol"]) * st.session_state["quincenas_multiplicador"]
 
 if "historial_auditoria" not in st.session_state: st.session_state["historial_auditoria"] = []
 if "ingresos_por_marca" not in st.session_state: st.session_state["ingresos_por_marca"] = {}
@@ -123,7 +123,7 @@ with st.sidebar:
         menu_title="MÓDULOS DEL SISTEMA",
         options=["Dashboard", "Planillas", "Memorándums", "Amonestaciones", "Auditoría", "Configuración"],
         icons=["grid-1x2-fill", "wallet-fill", "envelope-paper-fill", "shield-fill-exclamation", "clock-fill", "gear-fill"],
-        menu_icon="cast", default_index=0,
+        menu_icon="cast", default_index=1,
         styles={
             "container": {"padding": "0!important", "background-color": "#0A192F"},
             "icon": {"color": "#94A3B8", "font-size": "16px"}, 
@@ -132,21 +132,24 @@ with st.sidebar:
         }
     )
 
-# --- 5. PANEL SUPERIOR: LECTOR DE PDF Y AUTODETECCIÓN ---
+# --- 5. PANEL SUPERIOR: LECTOR DE PDF Y DEPURADOR ---
 if menu_seleccionado != "Configuración":
     with st.container():
-        col_title, col_btn = st.columns([3, 1])
-        with col_title:
-            st.markdown("<h2 style='color:#0F172A; font-weight:800;'>Bienvenido, Administración 👋</h2>", unsafe_allow_html=True)
-        with col_btn:
+        st.markdown("<h2 style='color:#0F172A; font-weight:800;'>Bienvenido, Administración 👋</h2>", unsafe_allow_html=True)
+        st.info(f"📅 **Período analizado:** {st.session_state['periodo_texto']}")
+        
+        col_up1, col_up2 = st.columns([3, 1])
+        with col_up1:
+            archivo_subido = st.file_uploader("📥 Sincronizar reporte de ventas (PDF)", type=["pdf"])
+        with col_up2:
             st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("🧹 Limpiar Reporte PDF"):
+            if st.button("🗑️ Limpiar Reporte PDF"):
                 st.session_state["total_ingresos_pdf"] = 0.0
                 st.session_state["ingresos_por_marca"] = {}
                 st.session_state["extras_por_marca"] = {}
                 st.session_state["total_fondo_publicidad"] = 0.0
-                st.session_state["meses_multiplicador"] = 1.0
-                st.session_state["periodo_texto"] = "1 Mes"
+                st.session_state["quincenas_multiplicador"] = 1.0
+                st.session_state["periodo_texto"] = "1 Quincena (Por defecto)"
                 for emp, info in st.session_state["empleados"].items():
                     st.session_state[f"com_{emp}"] = 0.0
                     st.session_state[f"extra_bruto_{emp}"] = 0.0
@@ -155,13 +158,9 @@ if menu_seleccionado != "Configuración":
                     if "Porcentaje" in st.session_state.get(f"mod_{emp}", info["mod"]):
                         st.session_state[f"base_{emp}"] = 0.0
                     else:
-                        st.session_state[f"base_{emp}"] = calcular_bruto_mensual(info["rol"])
-                st.success("¡Reporte PDF limpiado! Configuración y correos mantenidos.")
+                        st.session_state[f"base_{emp}"] = calcular_bruto_base(info["rol"]) * 1.0
+                st.success("¡Datos del PDF borrados exitosamente! (Sueldos y correos mantenidos)")
                 st.rerun()
-
-        st.info(f"📅 **Período analizado:** {st.session_state['periodo_texto']}")
-        
-        archivo_subido = st.file_uploader("📥 Sincronizar reporte de ventas (PDF)", type=["pdf"])
 
         if archivo_subido is not None:
             try:
@@ -188,18 +187,20 @@ if menu_seleccionado != "Configuración":
                     max_fecha = max(fechas_dt) if fechas_dt else datetime.now()
 
                 dias_diff = (max_fecha - min_fecha).days + 1
+                
+                # INTELIGENCIA DE TIEMPO (BASADA EN QUINCENAS)
                 if dias_diff <= 16:
-                    factor_mult = 0.5
+                    factor_mult = 1.0
                     texto_periodo = f"Del {min_fecha.strftime('%d/%m/%Y')} al {max_fecha.strftime('%d/%m/%Y')} (1 Quincena)"
                 elif dias_diff <= 31:
-                    factor_mult = 1.0
-                    texto_periodo = f"Del {min_fecha.strftime('%d/%m/%Y')} al {max_fecha.strftime('%d/%m/%Y')} (1 Mes)"
+                    factor_mult = 2.0
+                    texto_periodo = f"Del {min_fecha.strftime('%d/%m/%Y')} al {max_fecha.strftime('%d/%m/%Y')} (1 Mes / 2 Quincenas)"
                 else:
-                    factor_mult = float(round(dias_diff / 30.0, 1))
-                    factor_mult = max(1.0, factor_mult)
-                    texto_periodo = f"Del {min_fecha.strftime('%d/%m/%Y')} al {max_fecha.strftime('%d/%m/%Y')} ({factor_mult} meses)"
+                    meses_calculados = round(dias_diff / 30.0)
+                    factor_mult = float(max(1, meses_calculados) * 2.0) # Cada mes son 2 quincenas
+                    texto_periodo = f"Del {min_fecha.strftime('%d/%m/%Y')} al {max_fecha.strftime('%d/%m/%Y')} ({meses_calculados} Meses / {int(factor_mult)} Quincenas)"
 
-                st.session_state["meses_multiplicador"] = factor_mult
+                st.session_state["quincenas_multiplicador"] = factor_mult
                 st.session_state["periodo_texto"] = texto_periodo
 
                 header_idx = -1
@@ -242,7 +243,7 @@ if menu_seleccionado != "Configuración":
                             if "Porcentaje" in mod_actual:
                                 st.session_state[f"base_{emp}"] = 0.0
                             else:
-                                st.session_state[f"base_{emp}"] = calcular_bruto_mensual(info["rol"]) * st.session_state["meses_multiplicador"]
+                                st.session_state[f"base_{emp}"] = calcular_bruto_base(info["rol"]) * st.session_state["quincenas_multiplicador"]
 
                             df_p = df_reporte[df_reporte[col_prof].astype(str).str.contains(info["alias"], case=False, na=False, regex=True)]
                             tot_serv = df_p[col_precio].sum()
@@ -269,11 +270,7 @@ if menu_seleccionado != "Configuración":
                                 st.session_state[f"com_{emp}"] = 0.0
                                 st.session_state[f"ret_pub_{emp}"] = 0.0
 
-                        st.success(f"✅ ¡PDF analizado con éxito! Período detectado: {st.session_state['periodo_texto']}")
-                    else:
-                        st.warning("⚠️ Se encontró una tabla, pero no las columnas 'PROFESIONAL' y 'PRECIO'. Verifica el PDF.")
-                else:
-                    st.warning("⚠️ No se detectó ninguna tabla válida en el PDF.")
+                        st.success(f"✅ ¡PDF analizado con éxito! {st.session_state['periodo_texto']}")
             except Exception as e:
                 st.error(f"Error procesando PDF: {e}")
 
@@ -295,7 +292,6 @@ if menu_seleccionado == "Dashboard":
         col3.metric("🏦 Utilidad Neta Real", f"${utilidad_neta:,.2f}", delta=f"{((utilidad_neta/st.session_state['total_ingresos_pdf'])*100):.1f}% Margen")
 
         st.markdown("<br>", unsafe_allow_html=True)
-        # --- MVP / EMPLEADO ESTRELLA ---
         estrella_collab = max(st.session_state["empleados"].keys(), key=lambda e: st.session_state.get(f"serv_tot_{e}", 0.0))
         monto_estrella = st.session_state.get(f"serv_tot_{estrella_collab}", 0.0)
         
@@ -318,7 +314,7 @@ if menu_seleccionado == "Dashboard":
         metas_config = {}
         
         for i, (marca, ingresos) in enumerate(marcas.items()):
-            meta_def = 8000.0 * st.session_state["meses_multiplicador"] if "Dr" in marca else 5000.0 * st.session_state["meses_multiplicador"]
+            meta_def = 8000.0 * (st.session_state["quincenas_multiplicador"] / 2.0) if "Dr" in marca else 5000.0 * (st.session_state["quincenas_multiplicador"] / 2.0)
             metas_config[marca] = cols_metas[i].number_input(f"Meta: {marca}", value=meta_def, step=500.0, key=f"meta_{marca}")
         
         df_marcas = pd.DataFrame([{
@@ -329,7 +325,7 @@ if menu_seleccionado == "Dashboard":
         with c_chart: st.bar_chart(pd.DataFrame.from_dict(marcas, orient='index', columns=['Ingresos Brutos ($)']))
         with c_table: st.dataframe(df_marcas.style.format({"Ingresos Brutos": "${:,.2f}", "Extras Brutos": "${:,.2f}", "NETO CLÍNICA": "${:,.2f}", "Meta Asignada": "${:,.2f}"}), hide_index=True)
     else:
-        st.info("Sube un reporte PDF en la parte superior para habilitar las métricas del Dashboard.")
+        st.info("Sube el PDF de ingresos para generar el reporte corporativo.")
 
 elif menu_seleccionado == "Planillas":
     st.markdown("<h2 style='color:#0F172A;'>Control Financiero de Planillas</h2>", unsafe_allow_html=True)
@@ -484,7 +480,7 @@ elif menu_seleccionado == "Planillas":
 
 Es un placer saludarle de parte de la Dirección Administrativa de GIO GROUP SAS DE CV.
 
-Adjunto a este correo electrónico encontrará su Comprobante Oficial de Pago detallado, correspondiente al período liquidado: {st.session_state['periodo_texto']}. Le invitamos a revisar minuciosamente el desglose de su sueldo base, comisiones netas, retenciones e incentivos aplicados en este ciclo.
+Adjunto a este correo electrónico encontrará su Comprobante Oficial de Pago detallado, correspondiente al {st.session_state['periodo_texto']}. Le invitamos a revisar minuciosamente el desglose de su sueldo base, comisiones netas, retenciones e incentivos aplicados en este ciclo.
 
 Agradecemos profundamente su valiosa labor, dedicación y compromiso continuo con el crecimiento y la excelencia de nuestras marcas y clínicas. Su esfuerzo diario es un pilar fundamental para nuestra organización.
 
@@ -576,24 +572,25 @@ elif menu_seleccionado == "Auditoría":
 elif menu_seleccionado == "Configuración":
     st.markdown("<h2 style='color:#0F172A;'>⚙️ Configuración del Sistema (Admin)</h2>", unsafe_allow_html=True)
     
-    st.markdown("### 💰 1. Sueldos Netos Deseados (Mensuales)")
+    st.markdown("### 💰 1. Sueldos Netos (Por Quincena)")
+    st.info("Ingresa los sueldos netos quincenales. El sistema calculará automáticamente la retención mensual o quincenal según el PDF.")
     col_s1, col_s2 = st.columns(2)
     with col_s1:
-        st.session_state["salario_operativo_neto"] = st.number_input("Sueldo Mensual NETO Operativo:", value=float(st.session_state["salario_operativo_neto"]), step=10.0)
+        st.session_state["salario_operativo_neto"] = st.number_input("Sueldo Quincenal NETO Operativo:", value=float(st.session_state["salario_operativo_neto"]), step=10.0)
     with col_s2:
-        st.session_state["salario_directivo_neto"] = st.number_input("Sueldo Mensual NETO Administrativo ($600 mensual = $300 quincenal):", value=float(st.session_state["salario_directivo_neto"]), step=10.0)
+        st.session_state["salario_directivo_neto"] = st.number_input("Sueldo Quincenal NETO Administrativo:", value=float(st.session_state["salario_directivo_neto"]), step=10.0)
     
     st.markdown("---")
     st.markdown("### 📅 2. Ajuste Manual de Período")
     c_t1, c_t2 = st.columns(2)
     with c_t1: st.text_input("Periodo Detectado Actual:", value=st.session_state["periodo_texto"], disabled=True)
     with c_t2: 
-        meses_manual = st.number_input("Multiplicador Manual (Factor):", value=float(st.session_state["meses_multiplicador"]), step=0.5)
+        meses_manual = st.number_input("Multiplicador Manual (Quincenas):", value=float(st.session_state["quincenas_multiplicador"]), step=1.0)
         if st.button("Aplicar Multiplicador Manual"):
-            st.session_state["meses_multiplicador"] = float(meses_manual)
+            st.session_state["quincenas_multiplicador"] = float(meses_manual)
             for emp, info in st.session_state["empleados"].items():
                 if not "Porcentaje" in info["mod"]:
-                    st.session_state[f"base_{emp}"] = calcular_bruto_mensual(info["rol"]) * st.session_state["meses_multiplicador"]
+                    st.session_state[f"base_{emp}"] = calcular_bruto_base(info["rol"]) * st.session_state["quincenas_multiplicador"]
             st.success("Multiplicador manual aplicado.")
             st.rerun()
 
@@ -624,7 +621,7 @@ elif menu_seleccionado == "Configuración":
                     if "Porcentaje" in n_mod:
                         st.session_state[f"base_{n_nombre}"] = 0.0
                     else:
-                        st.session_state[f"base_{n_nombre}"] = calcular_bruto_mensual(n_rol) * st.session_state["meses_multiplicador"]
+                        st.session_state[f"base_{n_nombre}"] = calcular_bruto_base(n_rol) * st.session_state["quincenas_multiplicador"]
                     st.success(f"{n_nombre} guardado exitosamente.")
                     st.rerun()
             else:
