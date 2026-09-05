@@ -314,10 +314,10 @@ with tab_planillas:
     pdf_path = f"Recibo_{emp_sel_planilla.replace(' ', '_')}.pdf"
     pdf_p.output(pdf_path)
 
-    # Vista previa interactiva en pantalla del PDF
+    # Vista previa interactiva en pantalla del PDF (Corregido con b64encode)
     with open(pdf_path, "rb") as f:
-        base64_pdf = base64.b64decode(f.read())
-    pdf_display = f'<iframe src="data:application/pdf;base64,{base64.b64encode(base64_pdf).decode("utf-8")}" width="100%" height="500" type="application/pdf"></iframe>'
+        base64_pdf = base64.b64encode(f.read()).decode("utf-8")
+    pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="500" type="application/pdf"></iframe>'
     st.markdown("#### 👁️ Vista Previa del Recibo PDF:")
     st.markdown(pdf_display, unsafe_allow_html=True)
 
@@ -405,9 +405,9 @@ with tab_memos:
         pdf_m.output(memo_path)
 
         with open(memo_path, "rb") as f:
-            b64_memo = base64.b64decode(f.read())
+            b64_memo = base64.b64encode(f.read()).decode("utf-8")
         st.markdown("#### 👁️ Vista Previa del Memorándum:")
-        st.markdown(f'<iframe src="data:application/pdf;base64,{base64.b64encode(b64_memo).decode("utf-8")}" width="100%" height="400" type="application/pdf"></iframe>', unsafe_allow_html=True)
+        st.markdown(f'<iframe src="data:application/pdf;base64,{b64_memo}" width="100%" height="400" type="application/pdf"></iframe>', unsafe_allow_html=True)
 
     if st.button("🚀 Confirmar y Enviar Memorándum por Correo"):
         if not texto_memo:
@@ -496,9 +496,9 @@ with tab_amonestaciones:
         pdf_a.output(amon_path)
 
         with open(amon_path, "rb") as f:
-            b64_amon = base64.b64decode(f.read())
+            b64_amon = base64.b64encode(f.read()).decode("utf-8")
         st.markdown("#### 👁️ Vista Previa del Acta de Amonestación:")
-        st.markdown(f'<iframe src="data:application/pdf;base64,{base64.b64encode(b64_amon).decode("utf-8")}" width="100%" height="400" type="application/pdf"></iframe>', unsafe_allow_html=True)
+        st.markdown(f'<iframe src="data:application/pdf;base64,{b64_amon}" width="100%" height="400" type="application/pdf"></iframe>', unsafe_allow_html=True)
 
     if st.button("🚀 Confirmar y Enviar Amonestación por Correo"):
         if not motivo_amon:
