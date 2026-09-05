@@ -25,9 +25,10 @@ esconder_menu = """
 header {visibility: hidden;}
 footer {visibility: hidden;}
 .stDeployButton {display:none;}
-div[data-testid="stStatusWidget"] {visibility: hidden;}
-.viewerBadge_container {visibility: hidden !important;}
-iframe[title="streamlit/streamlit"] {display:none !important;}
+div[data-testid="stToolbar"] {visibility: hidden !important;}
+.viewerBadge_container {display: none !important; visibility: hidden !important;}
+[class*="viewerBadge"] {display: none !important; visibility: hidden !important;}
+footer {visibility: hidden !important;}
 </style>
 """
 st.markdown(esconder_menu, unsafe_allow_html=True)
