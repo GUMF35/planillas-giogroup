@@ -42,19 +42,16 @@ empleados_lista = [
     "Mario de Paz"
 ]
 
+# Inicializar memoria de sesión para comisiones y totales de servicios
 for emp in empleados_lista:
     if f"com_{emp}" not in st.session_state:
         st.session_state[f"com_{emp}"] = 0.0
+    if f"serv_tot_{emp}" not in st.session_state:
+        st.session_state[f"serv_tot_{emp}"] = 0.0
 
 # --- LECTOR DE PDF AUTOMÁTICO ---
 st.subheader("📂 Reporte de Ingresos (PDF)")
 archivo_subido = st.file_uploader("Sube el archivo PDF de ingresos aquí", type=["pdf", "xlsx", "csv"])
-
-datos_pdf_brutos = {
-    "Maydely Hernández": {"estandar": 0.0, "pub": 0.0, "total_serv": 0.0},
-    "Luis Violante": {"estandar": 0.0, "pub": 0.0, "total_serv": 0.0},
-    "Jessica Lemus": {"estandar": 0.0, "pub": 0.0, "total_serv": 0.0}
-}
 
 if archivo_subido is not None:
     try:
@@ -83,34 +80,55 @@ if archivo_subido is not None:
                     df_reporte[col_precio] = df_reporte[col_precio].astype(str).str.replace(r'[\$,\n]', '', regex=True)
                     df_reporte[col_precio] = pd.to_numeric(df_reporte[col_precio], errors='coerce').fillna(0.0)
 
-                    def procesar_datos_emp(nombre_corto):
+                    def procesar_empleado(nombre_corto):
                         df_prof = df_reporte[df_reporte[col_prof].astype(str).str.contains(nombre_corto, case=False, na=False)]
                         tot_servicios = df_prof[col_precio].sum()
                         
-                        # Cálculo estándar (servicios >= 60 menos 25% publicidad)
                         df_extras = df_prof[df_prof[col_precio] >= 60].copy()
-                        df_extras['EXTRA_BASE'] = df_extras['PRECIO'] - 60 if 'PRECIO' in df_extras.columns else df_extras[col_precio] - 60
+                        df_extras['EXTRA_BASE'] = df_extras[col_precio] - 60
                         total_bruto_extras = df_extras['EXTRA_BASE'].sum()
                         desc_pub = total_bruto_extras * 0.25
                         neto_estandar = max(0.0, total_bruto_extras - desc_pub)
                         
-                        return {
-                            "estandar": neto_estandar,
-                            "pub": desc_pub,
-                            "total_serv": tot_servicios
-                        }
+                        return neto_estandar, desc_pub, tot_servicios
 
-                    datos_pdf_brutos["Maydely Hernández"] = procesar_datos_emp("MAYDELY")
-                    datos_pdf_brutos["Luis Violante"] = procesar_datos_emp("LUIS")
-                    datos_pdf_brutos["Jessica Lemus"] = procesar_datos_emp("JESSICA")
+                    # Maydely
+                    m_est, m_pub, m_tot = procesar_empleado("MAYDELY")
+                    st.session_state["serv_tot_Maydely Hernández"] = m_tot
+                    if st.session_state.get(f"mod_Maydely Hernández", "Estándar") == "Estándar":
+                        st.session_state["com_Maydely Hernández"] = m_est
+                        st.session_state["pub_Maydely Hernández"] = m_pub
+                    else:
+                        st.session_state["com_Maydely Hernández"] = m_tot * 0.20
+                        st.session_state["pub_Maydely Hernández"] = 0.0
 
-                    st.success("¡Reporte PDF leído y analizado con éxito!")
+                    # Luis
+                    l_est, l_pub, l_tot = procesar_empleado("LUIS")
+                    st.session_state["serv_tot_Luis Violante"] = l_tot
+                    if st.session_state.get(f"mod_Luis Violante", "Estándar") == "Estándar":
+                        st.session_state["com_Luis Violante"] = l_est
+                        st.session_state["pub_Luis Violante"] = l_pub
+                    else:
+                        st.session_state["com_Luis Violante"] = l_tot * 0.20
+                        st.session_state["pub_Luis Violante"] = 0.0
+
+                    # Jessica
+                    j_est, j_pub, j_tot = procesar_empleado("JESSICA")
+                    st.session_state["serv_tot_Jessica Lemus"] = j_tot
+                    if st.session_state.get(f"mod_Jessica Lemus", "Estándar") == "Estándar":
+                        st.session_state["com_Jessica Lemus"] = j_est
+                        st.session_state["pub_Jessica Lemus"] = j_pub
+                    else:
+                        st.session_state["com_Jessica Lemus"] = j_tot * 0.20
+                        st.session_state["pub_Jessica Lemus"] = 0.0
+
+                    st.success("¡Reporte PDF leído y comisiones sumadas con éxito!")
     except Exception as e:
         st.warning(f"Advertencia al leer PDF: {e}")
 
 # --- PANEL DE PERSONALIZACIÓN Y MODALIDADES ---
 st.subheader("✍️ Ajustes, Comisiones y Modalidades por Empleado")
-st.markdown("Elige si el colaborador opera bajo el esquema Estándar (con sueldo y descuento de publicidad) o por Porcentaje Directo (sin descuento de publicidad):")
+st.markdown("Elige el esquema de pago para cada colaborador. Las comisiones se actualizarán y sumarán automáticamente:")
 
 datos_empleados = []
 
@@ -119,9 +137,7 @@ for emp in empleados_lista:
         col1, col2, col3 = st.columns(3)
         
         base_sugerido = base_fijos if "Gio" in emp or "Gerson" in emp or "Edwin" in emp else base_masajistas
-        
         desc_pub_actual = 0.0
-        comision_calculada = 0.0
         modalidad_str = "Estándar"
 
         with col1:
@@ -134,22 +150,35 @@ for emp in empleados_lista:
                     key=f"mod_{emp}"
                 )
                 
-                info_emp = datos_pdf_brutos.get(emp, {"estandar": 0.0, "pub": 0.0, "total_serv": 0.0})
+                tot_serv = st.session_state.get(f"serv_tot_{emp}", 0.0)
                 
                 if "Estándar" in modalidad:
                     modalidad_str = "Estándar"
-                    comision_calculada = info_emp["estandar"]
-                    desc_pub_actual = info_emp["pub"]
+                    # Recalcular estándar si cambia el selector
+                    df_aux = locals().get('df_reporte', None)
+                    if df_aux is not None and 'col_prof' in locals() and 'col_precio' in locals():
+                        nombre_ corto = emp.split()[0]
+                        df_p = df_aux[df_aux[col_prof].astype(str).str.contains(nombre_corto, case=False, na=False)]
+                        df_ex = df_p[df_p[col_precio] >= 60].copy()
+                        ext_val = (df_ex[col_precio] - 60).sum()
+                        d_pub = ext_val * 0.25
+                        st.session_state[f"com_{emp}"] = max(0.0, ext_val - d_pub)
+                        desc_pub_actual = d_pub
                 else:
                     modalidad_str = "Porcentaje Directo"
-                    porc_def = 20 if emp == "Jessica Lemus" else 20
+                    porc_def = 20
                     porc_personalizado = st.slider(f"Porcentaje Directo (%) [{emp}]", min_value=0, max_value=100, value=porc_def, key=f"porc_{emp}")
-                    comision_calculada = info_emp["total_serv"] * (porc_personalizado / 100.0)
-                    desc_pub_actual = 0.0 # No aplica deducción de publicidad en porcentaje directo
+                    st.session_state[f"com_{emp}"] = tot_serv * (porc_personalizado / 100.0)
+                    desc_pub_actual = 0.0
             else:
-                comision_calculada = 0.0
+                modalidad_str = "Administrativo/Fijo"
 
-            comision_extra = st.number_input(f"Comisiones / Servicios ($) [{emp}]", value=float(comision_calculada), key=f"com_{emp}", step=5.0)
+            # Campo controlado por session_state sin valor estático conflictivo
+            comision_extra = st.number_input(
+                f"Comisiones / Servicios ($) [{emp}]", 
+                key=f"com_{emp}", 
+                step=5.0
+            )
 
         with col2:
             horas_extras = st.number_input(f"Horas Extra / Bonos ($) [{emp}]", value=0.0, key=f"hex_{emp}", step=5.0)
@@ -238,7 +267,6 @@ if st.button("Generar PDF y Enviar por Correo"):
                 pdf.cell(130, 8, f"  {desc}", 1, 0, 'L')
                 pdf.cell(60, 8, f"${val:.2f} ", 1, 1, 'R')
 
-            # Si aplica descuento de publicidad (esquema estándar)
             if emp_data['Descuento Publicidad'] > 0:
                 pdf.set_text_color(201, 42, 42)
                 pdf.cell(130, 8, "  (-) Retención de 25% para Publicidad", 1, 0, 'L')
@@ -251,14 +279,12 @@ if st.button("Generar PDF y Enviar por Correo"):
                 pdf.cell(60, 8, f"-${emp_data['Otros Descuentos']:.2f} ", 1, 1, 'R')
                 pdf.set_text_color(50, 50, 50)
 
-            # Total Neto
             pdf.set_font('helvetica', 'B', 11)
             pdf.set_fill_color(230, 235, 240)
             pdf.cell(130, 10, "  TOTAL NETO A RECIBIR", 1, 0, 'L', fill=True)
             pdf.cell(60, 10, f"${emp_data['Total a Pagar ($)']:.2f} ", 1, 1, 'R', fill=True)
             pdf.ln(8)
 
-            # Notas
             pdf.set_font('helvetica', 'B', 10)
             pdf.set_text_color(0, 86, 179)
             pdf.cell(0, 6, "Motivo / Notas de Descuentos o Deducciones:", 0, 1, 'L')
