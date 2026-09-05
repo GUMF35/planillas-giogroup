@@ -14,31 +14,13 @@ import base64
 from PIL import Image
 from streamlit_option_menu import option_menu
 
-# --- 0. UTILIDADES DE SEGURIDAD / ROBUSTEZ (NUEVO) ---
-
+# --- 0. UTILIDADES DE SEGURIDAD FPDF ---
 def limpiar_texto_pdf(txt):
-    """
-    FIX #2: FPDF (fuente 'helvetica') solo soporta Latin-1.
-    Si el usuario escribe emojis, guiones largos, comillas curvas, etc.
-    en un memorándum o amonestación, FPDF lanza una excepción y rompe
-    la generación del PDF. Esta función reemplaza cualquier carácter
-    no soportado en vez de tronar la app.
-    """
-    if txt is None:
-        return ""
+    if txt is None: return ""
     return str(txt).encode('latin-1', 'replace').decode('latin-1')
 
-
 def generar_pdf_bytes(pdf_obj):
-    """
-    FIX #5: en vez de escribir el PDF a disco con un nombre fijo
-    (riesgo de que dos usuarios/generaciones simultáneas se pisen
-    en Streamlit Cloud), devolvemos los bytes directamente en memoria.
-    """
-    salida = pdf_obj.output()
-    # fpdf2 puede devolver bytearray; normalizamos a bytes puros
-    return bytes(salida)
-
+    return bytes(pdf_obj.output())
 
 # --- 1. CONFIGURACIÓN DE PÁGINA ---
 logo_path = os.path.join(os.path.dirname(__file__), "logo.png")
@@ -48,15 +30,12 @@ try:
         st.set_page_config(page_title="Gio Group Admin", page_icon=icono, layout="wide", initial_sidebar_state="expanded")
     else:
         st.set_page_config(page_title="Gio Group Admin", page_icon="🏢", layout="wide", initial_sidebar_state="expanded")
-except Exception as e:
-    # FIX #7: ya no se traga el error en silencio; se deja constancia y se
-    # sigue con una configuración segura por defecto.
-    st.session_state.setdefault("_errores_arranque", []).append(f"Error cargando ícono/logo: {e}")
+except Exception:
     st.set_page_config(page_title="Gio Group Admin", page_icon="🏢", layout="wide")
 
 # --- 2. BASE DE DATOS EN MEMORIA (ROLES Y CONFIGURACIÓN EXACTA) ---
-if "salario_operativo_neto" not in st.session_state: st.session_state["salario_operativo_neto"] = 367.92 # Base mensual estándar (para 1 mes)
-if "salario_directivo_neto" not in st.session_state: st.session_state["salario_directivo_neto"] = 300.00
+if "salario_operativo_neto" not in st.session_state: st.session_state["salario_operativo_neto"] = 183.96
+if "salario_directivo_neto" not in st.session_state: st.session_state["salario_directivo_neto"] = 600.00 # $300 quincenal = $600 mensual neto
 if "meses_multiplicador" not in st.session_state: st.session_state["meses_multiplicador"] = 1.0
 if "periodo_texto" not in st.session_state: st.session_state["periodo_texto"] = "1 Mes"
 
@@ -82,12 +61,6 @@ for emp, info in st.session_state["empleados"].items():
     if f"serv_tot_{emp}" not in st.session_state: st.session_state[f"serv_tot_{emp}"] = 0.0
     if f"hex_{emp}" not in st.session_state: st.session_state[f"hex_{emp}"] = 0.0
     if f"desc_{emp}" not in st.session_state: st.session_state[f"desc_{emp}"] = 0.0
-    # FIX #6: antes el correo por defecto de TODOS los colaboradores era el
-    # correo personal del admin (gersonmolina67@gmail.com). Eso significa
-    # que si alguien olvida configurar el correo real del colaborador, su
-    # recibo de pago (información sensible) se envía al admin en vez de a
-    # la persona correcta. Ahora queda vacío y se exige llenarlo antes de
-    # poder enviar.
     if f"email_{emp}" not in st.session_state: st.session_state[f"email_{emp}"] = ""
     if f"porc_{emp}" not in st.session_state: st.session_state[f"porc_{emp}"] = info["porc"]
     
@@ -162,10 +135,32 @@ with st.sidebar:
 # --- 5. PANEL SUPERIOR: LECTOR DE PDF Y AUTODETECCIÓN ---
 if menu_seleccionado != "Configuración":
     with st.container():
-        st.markdown("<h2 style='color:#0F172A; font-weight:800;'>Bienvenido, Administración 👋</h2>", unsafe_allow_html=True)
+        col_title, col_btn = st.columns([3, 1])
+        with col_title:
+            st.markdown("<h2 style='color:#0F172A; font-weight:800;'>Bienvenido, Administración 👋</h2>", unsafe_allow_html=True)
+        with col_btn:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("🧹 Limpiar Reporte PDF"):
+                st.session_state["total_ingresos_pdf"] = 0.0
+                st.session_state["ingresos_por_marca"] = {}
+                st.session_state["extras_por_marca"] = {}
+                st.session_state["total_fondo_publicidad"] = 0.0
+                st.session_state["meses_multiplicador"] = 1.0
+                st.session_state["periodo_texto"] = "1 Mes"
+                for emp, info in st.session_state["empleados"].items():
+                    st.session_state[f"com_{emp}"] = 0.0
+                    st.session_state[f"extra_bruto_{emp}"] = 0.0
+                    st.session_state[f"ret_pub_{emp}"] = 0.0
+                    st.session_state[f"serv_tot_{emp}"] = 0.0
+                    if "Porcentaje" in st.session_state.get(f"mod_{emp}", info["mod"]):
+                        st.session_state[f"base_{emp}"] = 0.0
+                    else:
+                        st.session_state[f"base_{emp}"] = calcular_bruto_mensual(info["rol"])
+                st.success("¡Reporte PDF limpiado! Configuración y correos mantenidos.")
+                st.rerun()
+
         st.info(f"📅 **Período analizado:** {st.session_state['periodo_texto']}")
         
-        # UPLOADER AISLADO: Solo limpia/reemplaza los datos del PDF sin alterar sueldos base configurados
         archivo_subido = st.file_uploader("📥 Sincronizar reporte de ventas (PDF)", type=["pdf"])
 
         if archivo_subido is not None:
@@ -174,10 +169,6 @@ if menu_seleccionado != "Configuración":
                 todas_las_filas = []
                 with pdfplumber.open(archivo_subido) as pdf:
                     for page in pdf.pages:
-                        # FIX #1: extract_text() puede devolver None en páginas
-                        # escaneadas/sin texto seleccionable. Antes esto causaba
-                        # "TypeError: unsupported operand type(s) for +: 'NoneType' and 'str'"
-                        # y tumbaba toda la app al subir ciertos PDFs.
                         texto_pagina = page.extract_text() or ""
                         texto_completo += texto_pagina + " "
                         tabla = page.extract_table()
@@ -224,15 +215,7 @@ if menu_seleccionado != "Configuración":
 
                     if col_prof and col_precio:
                         df_reporte = df_reporte.dropna(subset=[col_prof, col_precio])
-
-                        # FIX #3: en PDFs de varias páginas, el encabezado de la
-                        # tabla ("PROFESIONAL", "PRECIO", etc.) suele repetirse
-                        # en cada página y se colaba como si fuera una fila de
-                        # datos real. La filtramos explícitamente.
-                        df_reporte = df_reporte[
-                            ~df_reporte[col_prof].astype(str).str.upper().str.contains('PROFESIONAL', na=False)
-                        ]
-
+                        df_reporte = df_reporte[~df_reporte[col_prof].astype(str).str.upper().str.contains('PROFESIONAL', na=False)]
                         df_reporte[col_precio] = df_reporte[col_precio].astype(str).str.replace(r'[\$,\n]', '', regex=True)
                         df_reporte[col_precio] = pd.to_numeric(df_reporte[col_precio], errors='coerce').fillna(0.0)
 
@@ -288,12 +271,9 @@ if menu_seleccionado != "Configuración":
 
                         st.success(f"✅ ¡PDF analizado con éxito! Período detectado: {st.session_state['periodo_texto']}")
                     else:
-                        # FIX #4: antes, si no se encontraban las columnas
-                        # PROFESIONAL/PRECIO, el PDF se descartaba sin ningún
-                        # aviso y el admin creía que ya estaba sincronizado.
-                        st.warning("⚠️ Se encontró una tabla, pero no se pudieron identificar las columnas 'PROFESIONAL' y 'PRECIO'. Verifica el formato del PDF.")
+                        st.warning("⚠️ Se encontró una tabla, pero no las columnas 'PROFESIONAL' y 'PRECIO'. Verifica el PDF.")
                 else:
-                    st.warning("⚠️ No se detectó ninguna tabla con encabezado 'PROFESIONAL' en el PDF. No se sincronizaron datos.")
+                    st.warning("⚠️ No se detectó ninguna tabla válida en el PDF.")
             except Exception as e:
                 st.error(f"Error procesando PDF: {e}")
 
@@ -302,9 +282,6 @@ if menu_seleccionado != "Configuración":
 # --- 6. ENRUTAMIENTO DE PÁGINAS ---
 
 if menu_seleccionado == "Dashboard":
-    st.markdown("<h2 style='color:#0F172A;'>Panel de Control General (Dashboard)</h2>", unsafe_allow_html=True)
-    st.markdown("<br>", unsafe_allow_html=True)
-
     if st.session_state["total_ingresos_pdf"] > 0:
         costo_planilla = sum([
             st.session_state[f"base_{emp}"] + st.session_state[f"com_{emp}"] + st.session_state[f"hex_{emp}"] - st.session_state[f"desc_{emp}"] - (0.0 if "Porcentaje" in st.session_state.get(f"mod_{emp}", st.session_state["empleados"][emp]["mod"]) and st.session_state["empleados"][emp]["rol"] == "Operativo" else st.session_state[f"base_{emp}"] * 0.10)
@@ -317,9 +294,8 @@ if menu_seleccionado == "Dashboard":
         col2.metric("💸 Costo Operativo (Planillas)", f"${costo_planilla:,.2f}")
         col3.metric("🏦 Utilidad Neta Real", f"${utilidad_neta:,.2f}", delta=f"{((utilidad_neta/st.session_state['total_ingresos_pdf'])*100):.1f}% Margen")
 
-        # --- SECCIÓN: PERSONA ESTRELLA (MVP DEL PERÍODO) ---
         st.markdown("<br>", unsafe_allow_html=True)
-        # Calcular quién generó más en servicios totales
+        # --- MVP / EMPLEADO ESTRELLA ---
         estrella_collab = max(st.session_state["empleados"].keys(), key=lambda e: st.session_state.get(f"serv_tot_{e}", 0.0))
         monto_estrella = st.session_state.get(f"serv_tot_{estrella_collab}", 0.0)
         
@@ -331,7 +307,11 @@ if menu_seleccionado == "Dashboard":
         """, unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
 
-        st.markdown("<h3 style='color:#0F172A;'>🎯 Rendimiento Neto de Marcas (Holding)</h3>", unsafe_allow_html=True)
+        st.markdown("<h3 style='color:#0F172A;'>⭐ Rendimiento del Personal Activo</h3>", unsafe_allow_html=True)
+        datos_rendimiento = [{"Colaborador": e, "Rol": st.session_state["empleados"][e]["rol"], "Total Generado ($)": st.session_state.get(f"serv_tot_{e}", 0.0)} for e in st.session_state["empleados"]]
+        st.dataframe(pd.DataFrame(datos_rendimiento).style.format({"Total Generado ($)": "${:,.2f}"}), use_container_width=True, hide_index=True)
+
+        st.markdown("<br><h3 style='color:#0F172A;'>🎯 Rendimiento Neto de Marcas (Holding)</h3>", unsafe_allow_html=True)
         marcas = st.session_state["ingresos_por_marca"]
         extras = st.session_state["extras_por_marca"]
         cols_metas = st.columns(len(marcas) if len(marcas) > 0 else 1)
@@ -349,11 +329,10 @@ if menu_seleccionado == "Dashboard":
         with c_chart: st.bar_chart(pd.DataFrame.from_dict(marcas, orient='index', columns=['Ingresos Brutos ($)']))
         with c_table: st.dataframe(df_marcas.style.format({"Ingresos Brutos": "${:,.2f}", "Extras Brutos": "${:,.2f}", "NETO CLÍNICA": "${:,.2f}", "Meta Asignada": "${:,.2f}"}), hide_index=True)
     else:
-        st.info("Sube un reporte PDF en la parte superior para habilitar las métricas y la Persona Estrella del Dashboard.")
+        st.info("Sube un reporte PDF en la parte superior para habilitar las métricas del Dashboard.")
 
 elif menu_seleccionado == "Planillas":
     st.markdown("<h2 style='color:#0F172A;'>Control Financiero de Planillas</h2>", unsafe_allow_html=True)
-    st.markdown("<br>", unsafe_allow_html=True)
     datos_emp = []
 
     for emp, info in st.session_state["empleados"].items():
@@ -427,7 +406,7 @@ elif menu_seleccionado == "Planillas":
         st.dataframe(df_res.style.format({
             "Sueldo Base (Bruto)": "${:.2f}", 
             "Extra Bruto": "${:,.2f}",
-            "Retención Pub (25%)": "${:,.2f}",
+            "Retención Pub (25%)": "${:.2f}",
             "Comisiones Netas": "${:.2f}", 
             "Bonos": "${:.2f}", 
             "Descuentos": "${:.2f}", 
@@ -479,9 +458,6 @@ elif menu_seleccionado == "Planillas":
             pdf.set_font('helvetica', 'B', 11); pdf.set_fill_color(243, 244, 246); pdf.set_text_color(10, 25, 47)
             pdf.cell(130, 10, "  TOTAL LÍQUIDO A RECIBIR", 1, 0, 'L', fill=True); pdf.cell(60, 10, f"${e_dat['Total a Pagar']:.2f}", 1, 1, 'R', fill=True)
             
-            # FIX #5: se genera en memoria (bytes) en vez de escribir a disco
-            # con un nombre fijo que podía colisionar entre usuarios/sesiones
-            # concurrentes en Streamlit Cloud.
             nombre_archivo = f"Recibo_{e_sel.replace(' ','_')}.pdf"
             st.session_state['t_pdf'] = generar_pdf_bytes(pdf)
             st.session_state['t_path'] = nombre_archivo
@@ -508,7 +484,7 @@ elif menu_seleccionado == "Planillas":
 
 Es un placer saludarle de parte de la Dirección Administrativa de GIO GROUP SAS DE CV.
 
-Adjunto a este correo electrónico encontrará su Comprobante Oficial de Pago detallado, correspondiente al período liquidado del {st.session_state['periodo_texto']}. Le invitamos a revisar minuciosamente el desglose de su sueldo base, comisiones netas, retenciones e incentivos aplicados en este ciclo.
+Adjunto a este correo electrónico encontrará su Comprobante Oficial de Pago detallado, correspondiente al período liquidado: {st.session_state['periodo_texto']}. Le invitamos a revisar minuciosamente el desglose de su sueldo base, comisiones netas, retenciones e incentivos aplicados en este ciclo.
 
 Agradecemos profundamente su valiosa labor, dedicación y compromiso continuo con el crecimiento y la excelencia de nuestras marcas y clínicas. Su esfuerzo diario es un pilar fundamental para nuestra organización.
 
@@ -522,8 +498,6 @@ GIO GROUP SAS DE CV
                     
                     msg.attach(MIMEText(cuerpo_correo, 'plain'))
                     
-                    # FIX #5 (cont.): adjuntamos directamente los bytes en
-                    # memoria, ya no dependemos de un archivo en disco.
                     parte_adjunta = MIMEApplication(st.session_state['t_pdf'], Name=st.session_state['t_path'])
                     parte_adjunta['Content-Disposition'] = f'attachment; filename="{st.session_state["t_path"]}"'
                     msg.attach(parte_adjunta)
@@ -558,7 +532,7 @@ elif menu_seleccionado == "Memorándums":
             pdf_m = PDFMemo(); pdf_m.add_page(); pdf_m.set_font('helvetica', 'B', 11)
             pdf_m.cell(0, 10, limpiar_texto_pdf(f" Entregado a: {emp_memo}"), 0, 1, 'L'); pdf_m.cell(0, 10, limpiar_texto_pdf(f" Asunto Central: {asunto_memo}"), 0, 1, 'L')
             pdf_m.set_font('helvetica', '', 11); pdf_m.multi_cell(0, 7, limpiar_texto_pdf(texto_memo), 0, 'L')
-            # FIX #5: PDF generado en memoria, sin escribir a disco.
+            
             nombre_memo = f"Memorandum_{emp_memo.replace(' ','_')}.pdf"
             st.session_state['temp_memo_pdf'] = generar_pdf_bytes(pdf_m)
             st.session_state['temp_memo_path'] = nombre_memo
@@ -582,7 +556,7 @@ elif menu_seleccionado == "Amonestaciones":
                     self.set_font('helvetica', 'B', 16); self.set_text_color(201, 42, 42); self.cell(0, 10, 'GIO GROUP SAS DE CV', 0, 1, 'L'); self.ln(5)
             pdf_a = PDFAmon(); pdf_a.add_page(); pdf_a.set_font('helvetica', 'B', 11)
             pdf_a.cell(0, 10, limpiar_texto_pdf(f" Dirigido a: {emp_amon}"), 0, 1, 'L'); pdf_a.multi_cell(0, 7, limpiar_texto_pdf(motivo_amon), 1, 'L')
-            # FIX #5: PDF generado en memoria, sin escribir a disco.
+            
             nombre_amon = f"Acta_Amonestacion_{emp_amon.replace(' ','_')}.pdf"
             st.session_state['temp_amon_pdf'] = generar_pdf_bytes(pdf_a)
             st.session_state['temp_amon_path'] = nombre_amon
@@ -597,7 +571,7 @@ elif menu_seleccionado == "Auditoría":
     if st.session_state["historial_auditoria"]:
         st.dataframe(pd.DataFrame(st.session_state["historial_auditoria"]), use_container_width=True)
     else:
-        st.info("El registro está limpio. No se han detectado acciones recientes.")
+        st.info("El registro está limpio. No se han detectado envíos recientes por correo.")
 
 elif menu_seleccionado == "Configuración":
     st.markdown("<h2 style='color:#0F172A;'>⚙️ Configuración del Sistema (Admin)</h2>", unsafe_allow_html=True)
@@ -607,7 +581,7 @@ elif menu_seleccionado == "Configuración":
     with col_s1:
         st.session_state["salario_operativo_neto"] = st.number_input("Sueldo Mensual NETO Operativo:", value=float(st.session_state["salario_operativo_neto"]), step=10.0)
     with col_s2:
-        st.session_state["salario_directivo_neto"] = st.number_input("Sueldo Mensual NETO Administrativo:", value=float(st.session_state["salario_directivo_neto"]), step=10.0)
+        st.session_state["salario_directivo_neto"] = st.number_input("Sueldo Mensual NETO Administrativo ($600 mensual = $300 quincenal):", value=float(st.session_state["salario_directivo_neto"]), step=10.0)
     
     st.markdown("---")
     st.markdown("### 📅 2. Ajuste Manual de Período")
@@ -643,7 +617,6 @@ elif menu_seleccionado == "Configuración":
                     st.session_state[f"extra_bruto_{n_nombre}"] = 0.0
                     st.session_state[f"ret_pub_{n_nombre}"] = 0.0
                     st.session_state[f"serv_tot_{n_nombre}"] = 0.0
-                    # FIX #6: ya no se precarga con el correo del admin.
                     st.session_state[f"email_{n_nombre}"] = ""
                     st.session_state[f"hex_{n_nombre}"] = 0.0
                     st.session_state[f"desc_{n_nombre}"] = 0.0
