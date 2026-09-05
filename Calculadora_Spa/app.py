@@ -42,12 +42,14 @@ empleados_lista = [
     "Mario de Paz"
 ]
 
-# Inicializar memoria de sesión para comisiones y totales de servicios
+# Inicializar memoria de sesión para comisiones, servicios y correos de prueba
 for emp in empleados_lista:
     if f"com_{emp}" not in st.session_state:
         st.session_state[f"com_{emp}"] = 0.0
     if f"serv_tot_{emp}" not in st.session_state:
         st.session_state[f"serv_tot_{emp}"] = 0.0
+    if f"email_{emp}" not in st.session_state:
+        st.session_state[f"email_{emp}"] = "gersonmolina67@gmail.com"
 
 # --- LECTOR DE PDF AUTOMÁTICO ---
 st.subheader("📂 Reporte de Ingresos (PDF)")
@@ -95,7 +97,7 @@ if archivo_subido is not None:
                     # Maydely
                     m_est, m_pub, m_tot = procesar_empleado("MAYDELY")
                     st.session_state["serv_tot_Maydely Hernández"] = m_tot
-                    if st.session_state.get(f"mod_Maydely Hernández", "Estándar") == "Estándar":
+                    if st.session_state.get("mod_Maydely Hernández", "Estándar") == "Estándar":
                         st.session_state["com_Maydely Hernández"] = m_est
                         st.session_state["pub_Maydely Hernández"] = m_pub
                     else:
@@ -105,7 +107,7 @@ if archivo_subido is not None:
                     # Luis
                     l_est, l_pub, l_tot = procesar_empleado("LUIS")
                     st.session_state["serv_tot_Luis Violante"] = l_tot
-                    if st.session_state.get(f"mod_Luis Violante", "Estándar") == "Estándar":
+                    if st.session_state.get("mod_Luis Violante", "Estándar") == "Estándar":
                         st.session_state["com_Luis Violante"] = l_est
                         st.session_state["pub_Luis Violante"] = l_pub
                     else:
@@ -115,7 +117,7 @@ if archivo_subido is not None:
                     # Jessica
                     j_est, j_pub, j_tot = procesar_empleado("JESSICA")
                     st.session_state["serv_tot_Jessica Lemus"] = j_tot
-                    if st.session_state.get(f"mod_Jessica Lemus", "Estándar") == "Estándar":
+                    if st.session_state.get("mod_Jessica Lemus", "Estándar") == "Estándar":
                         st.session_state["com_Jessica Lemus"] = j_est
                         st.session_state["pub_Jessica Lemus"] = j_pub
                     else:
@@ -184,7 +186,8 @@ for emp in empleados_lista:
         
         with col3:
             nota_descuento = st.text_input(f"Nota / Motivo Descuento [{emp}]", value="Ninguno", key=f"nota_{emp}")
-            email_emp = st.text_input(f"Correo Electrónico [{emp}]", value="gersonmolina67@gmail.com" if "Gerson" in emp else "", key=f"email_{emp}")
+            # Se vincula directamente a session_state para evitar campos vacíos
+            email_emp = st.text_input(f"Correo Electrónico [{emp}]", key=f"email_{emp}")
 
         total_bruto = sueldo_base + comision_extra + horas_extras
         total_neto = total_bruto - descuentos_extras
@@ -205,18 +208,25 @@ for emp in empleados_lista:
 df_resumen = pd.DataFrame(datos_empleados)
 
 st.subheader("📋 Resumen General de Planilla")
-st.dataframe(df_resumen[["Empleado", "Sueldo Base", "Comisiones", "Modalidad", "Descuento Publicidad", "Total a Pagar ($)"]].style.format({
-    "Sueldo Base": "{:.2f}", "Comisiones": "{:.2f}", "Descuento Publicidad": "{:.2f}", "Total a Pagar ($)": "{:.2f}"
-}))
+st.dataframe(
+    df_resumen[["Empleado", "Sueldo Base", "Comisiones", "Modalidad", "Descuento Publicidad", "Total a Pagar ($)"]].style.format({
+        "Sueldo Base": "{:.2f}", "Comisiones": "{:.2f}", "Descuento Publicidad": "{:.2f}", "Total a Pagar ($)": "{:.2f}"
+    }),
+    use_container_width=True,
+    hide_index=True
+)
 
 # --- APARTADO DE CORREOS Y RECIBOS PDF ---
 st.subheader("✉️ Enviar Comprobantes en PDF por Gmail")
 empleado_seleccionado = st.selectbox("Selecciona a quién generar y enviar el recibo:", empleados_lista)
 
+# Leer directamente el correo desde st.session_state para garantizar que nunca falle
+email_actual = st.session_state.get(f"email_{empleado_seleccionado}", "gersonmolina67@gmail.com")
 emp_data = next(item for item in datos_empleados if item["Empleado"] == empleado_seleccionado)
+emp_data["Email"] = email_actual
 
 if st.button("Generar PDF y Enviar por Correo"):
-    if not emp_data["Email"]:
+    if not emp_data["Email"] or "@" not in emp_data["Email"]:
         st.error(f"⚠️ El empleado {empleado_seleccionado} no tiene un correo electrónico válido registrado.")
     else:
         try:
