@@ -25,7 +25,7 @@ try:
 except:
     st.set_page_config(page_title="Gio Group Admin", page_icon="🏢", layout="wide")
 
-# --- 2. BASE DE DATOS EN MEMORIA Y VARIABLES FINANCIERAS ---
+# --- 2. BASE DE DATOS EN MEMORIA (ROLES Y CONFIGURACIÓN EXACTA) ---
 if "salario_operativo_neto" not in st.session_state: st.session_state["salario_operativo_neto"] = 183.96
 if "salario_directivo_neto" not in st.session_state: st.session_state["salario_directivo_neto"] = 300.00
 if "meses_multiplicador" not in st.session_state: st.session_state["meses_multiplicador"] = 1.0
@@ -36,10 +36,10 @@ if "empleados" not in st.session_state:
         "Maydely Hernández": {"rol": "Operativo", "alias": "MAYDELY", "mod": "Porcentaje Directo (%)", "porc": 20},
         "Luis Violante": {"rol": "Operativo", "alias": "LUIS", "mod": "Porcentaje Directo (%)", "porc": 20},
         "Jessica Lemus": {"rol": "Operativo", "alias": "JESSICA", "mod": "Porcentaje Directo (%)", "porc": 20},
-        "Dr. Gio Molina": {"rol": "Directivo", "alias": "GIO|MARVIN|DOCTOR", "mod": "Fijo", "porc": 0},
-        "Gerson Ulises Molina Flores": {"rol": "Directivo", "alias": "GERSON", "mod": "Fijo", "porc": 0},
-        "Edwin Ponce": {"rol": "Directivo", "alias": "EDWIN", "mod": "Fijo", "porc": 0},
-        "Mario de Paz": {"rol": "Directivo", "alias": "MARIO", "mod": "Fijo", "porc": 0}
+        "Mario de Paz": {"rol": "Operativo", "alias": "MARIO", "mod": "Porcentaje Directo (%)", "porc": 20}, # ¡Mario ahora es Operativo igual que Maydely!
+        "Dr. Gio Molina": {"rol": "Administrativo", "alias": "GIO|MARVIN|DOCTOR", "mod": "Fijo", "porc": 0},
+        "Gerson Ulises Molina Flores": {"rol": "Administrativo", "alias": "GERSON", "mod": "Fijo", "porc": 0},
+        "Edwin Ponce": {"rol": "Administrativo", "alias": "EDWIN", "mod": "Fijo", "porc": 0}
     }
 
 def calcular_bruto_mensual(rol):
@@ -116,7 +116,7 @@ with st.sidebar:
         }
     )
 
-# --- 5. PANEL SUPERIOR: LECTOR DE PDF Y AUTODETECCIÓN DE FECHAS (MESES EXACTOS) ---
+# --- 5. PANEL SUPERIOR: LECTOR DE PDF Y AUTODETECCIÓN DE FECHAS ---
 if menu_seleccionado != "Configuración":
     with st.container():
         st.markdown("<h2 style='color:#0F172A; font-weight:800;'>Bienvenido, Administración 👋</h2>", unsafe_allow_html=True)
@@ -134,7 +134,7 @@ if menu_seleccionado != "Configuración":
                         tabla = page.extract_table()
                         if tabla: todas_las_filas.extend(tabla)
                 
-                # 1. AUTODETECCIÓN DE FECHAS DEL PDF (Ej: Desde: 2026-05-01 | Hasta: 2026-08-31)
+                # Autodetección de fechas ISO o diagonales
                 fechas_iso = re.findall(r'\b20\d{2}-\d{2}-\d{2}\b', texto_completo)
                 if len(fechas_iso) >= 2:
                     min_fecha = datetime.strptime(fechas_iso[0], '%Y-%m-%d')
@@ -148,7 +148,6 @@ if menu_seleccionado != "Configuración":
                     min_fecha = min(fechas_dt) if fechas_dt else datetime.now()
                     max_fecha = max(fechas_dt) if fechas_dt else datetime.now()
 
-                # Calcular número exacto de meses entre las fechas del PDF
                 meses_diff = (max_fecha.year - min_fecha.year) * 12 + (max_fecha.month - min_fecha.month)
                 if max_fecha.day >= 15: meses_diff += 1
                 meses_diff = float(max(1, meses_diff))
@@ -156,7 +155,6 @@ if menu_seleccionado != "Configuración":
                 st.session_state["meses_multiplicador"] = meses_diff
                 st.session_state["periodo_texto"] = f"Del {min_fecha.strftime('%d/%m/%Y')} al {max_fecha.strftime('%d/%m/%Y')} ({int(meses_diff)} meses)"
 
-                # 2. PROCESAMIENTO DE TABLA DE INGRESOS
                 header_idx = -1
                 for i, row in enumerate(todas_las_filas):
                     if row and any(isinstance(cell, str) and 'PROFESIONAL' in cell.upper() for cell in row):
@@ -177,7 +175,7 @@ if menu_seleccionado != "Configuración":
 
                         def asignar_marca(profesional):
                             p = str(profesional).upper()
-                            if "MAYDELY" in p or "JESSICA" in p: return "Papi Spa"
+                            if "MAYDELY" in p or "JESSICA" in p or "MARIO" in p: return "Papi Spa" # Mario atiende en spa/masajes
                             if "LUIS" in p: return "Relájate Man"
                             if "GIO" in p or "MARVIN" in p or "DOCTOR" in p: return "Dr. Gio Molina"
                             return "Relájate Clinic"
@@ -190,9 +188,8 @@ if menu_seleccionado != "Configuración":
                         df_reporte['EXTRA_BRUTO'] = df_reporte.apply(calcular_extra_marca, axis=1)
                         st.session_state["extras_por_marca"] = df_reporte.groupby('MARCA')['EXTRA_BRUTO'].sum().to_dict()
                         
-                        # 3. ACTUALIZAR SUELDOS MULTIPLICADOS Y COMISIONES TOTALES DEL PERÍODO
+                        # Actualizar sueldos y comisiones para todos los activos
                         for emp, info in st.session_state["empleados"].items():
-                            # Sueldo base bruto multiplicado por la cantidad de meses del reporte
                             st.session_state[f"base_{emp}"] = calcular_bruto_mensual(info["rol"]) * st.session_state["meses_multiplicador"]
 
                             df_p = df_reporte[df_reporte[col_prof].astype(str).str.contains(info["alias"], case=False, na=False, regex=True)]
@@ -212,7 +209,7 @@ if menu_seleccionado != "Configuración":
                             else:
                                 st.session_state[f"com_{emp}"] = 0.0
 
-                        st.success(f"✅ ¡PDF analizado! Se detectaron {int(st.session_state['meses_multiplicador'])} meses. Sueldos y comisiones sumadas para todo el período.")
+                        st.success(f"✅ ¡PDF analizado! Período de {int(st.session_state['meses_multiplicador'])} meses procesado con éxito.")
             except Exception as e:
                 st.error(f"Error procesando PDF: {e}")
 
@@ -222,7 +219,6 @@ if menu_seleccionado != "Configuración":
 
 if menu_seleccionado == "Dashboard":
     if st.session_state["total_ingresos_pdf"] > 0:
-        
         costo_planilla = sum([
             st.session_state[f"base_{emp}"] + st.session_state[f"com_{emp}"] + st.session_state[f"hex_{emp}"] - st.session_state[f"desc_{emp}"] - (st.session_state[f"base_{emp}"] * 0.10)
             for emp in st.session_state["empleados"].keys()
@@ -278,7 +274,7 @@ elif menu_seleccionado == "Planillas":
                     else:
                         st.session_state[f"mod_{emp}"] = "Estándar"
                 else:
-                    st.caption(f"Ingresos generados en el periodo: ${st.session_state[f'serv_tot_{emp}']:.2f}")
+                    st.caption(f"Personal Administrativo (Sueldo Fijo)")
 
                 val_com = st.number_input(f"Comisiones ($)", value=float(st.session_state[f"com_{emp}"]), key=f"ui_c_{emp}")
                 st.session_state[f"com_{emp}"] = val_com
@@ -295,7 +291,7 @@ elif menu_seleccionado == "Planillas":
                 e_em = st.text_input(f"Correo", value=st.session_state[f"email_{emp}"], key=f"ui_e_{emp}")
                 st.session_state[f"email_{emp}"] = e_em
 
-            # REGLA DE ORO: RENTA ÚNICA Y EXCLUSIVAMENTE SOBRE LA CASILLA "SUELDO BASE (BRUTO)" MULTIPLICADA
+            # Renta 10% exclusivamente sobre el sueldo base bruto acumulado
             renta_calculada = st.session_state[f"base_{emp}"] * 0.10
             t_net = st.session_state[f"base_{emp}"] + st.session_state[f"com_{emp}"] + st.session_state[f"hex_{emp}"] - renta_calculada - st.session_state[f"desc_{emp}"]
             
@@ -362,7 +358,7 @@ elif menu_seleccionado == "Configuración":
     with col_s1:
         st.session_state["salario_operativo_neto"] = st.number_input("Sueldo Mensual NETO Operativo:", value=float(st.session_state["salario_operativo_neto"]), step=10.0)
     with col_s2:
-        st.session_state["salario_directivo_neto"] = st.number_input("Sueldo Mensual NETO Directivo:", value=float(st.session_state["salario_directivo_neto"]), step=10.0)
+        st.session_state["salario_directivo_neto"] = st.number_input("Sueldo Mensual NETO Administrativo:", value=float(st.session_state["salario_directivo_neto"]), step=10.0)
     
     st.markdown("---")
     st.markdown("### 📅 2. Ajuste Manual de Período")
@@ -383,7 +379,7 @@ elif menu_seleccionado == "Configuración":
     with col_p1:
         st.markdown("#### ✨ Alta de Colaborador")
         n_nombre = st.text_input("Nombre Completo:")
-        n_rol = st.selectbox("Rol:", ["Operativo", "Directivo"])
+        n_rol = st.selectbox("Rol:", ["Operativo", "Administrativo"])
         n_mod = st.selectbox("Modalidad:", ["Porcentaje Directo (%)", "Estándar"])
         n_porc = st.number_input("Porcentaje (%) si aplica:", value=20)
         n_alias = st.text_input("Alias PDF (Ej. MARIA):")
