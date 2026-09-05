@@ -31,14 +31,25 @@ st.title("💆‍♂️ Gio Group SAS de CV - Control Integral de Planillas")
 st.sidebar.header("⚙️ Configuración General")
 periodo = st.sidebar.radio("Selecciona el periodo:", ("Quincenal", "Mensual"))
 
-base_masajistas = st.sidebar.number_input("Sueldo Base Masajistas/Ventas ($):", value=183.96 if periodo == "Quincenal" else 367.92, step=10.0)
+base_masajistas = st.sidebar.number_input("Sueldo Base Estándar ($):", value=183.96 if periodo == "Quincenal" else 367.92, step=10.0)
 base_fijos = st.sidebar.number_input("Sueldo Base Administrativo ($):", value=300.00 if periodo == "Quincenal" else 600.00, step=10.0)
 
-# --- LECTOR DE PDF (OPCIONAL) ---
-st.write("📂 **Sube tu reporte de ingresos en PDF** (opcional, para referencia):")
-archivo_subido = st.file_uploader("Sube tu archivo aquí", type=["pdf", "xlsx", "csv"])
+# --- LECTOR DE PDF AUTOMÁTICO ---
+st.subheader("📂 Reporte de Ingresos (PDF)")
+archivo_subido = st.file_uploader("Sube el archivo PDF de ingresos aquí", type=["pdf", "xlsx", "csv"])
 
-df = None
+# Valores automáticos iniciales por defecto si no hay archivo
+sugerencias_comisiones = {
+    "Maydely Hernández": 0.0,
+    "Luis Violante": 0.0,
+    "Jessica Lemus": 0.0,
+    "Dr. Gio Molina (Marvin Giovanni Molina Flores)": 0.0,
+    "Gerson Ulises Molina Flores": 0.0,
+    "Edwin Ponce": 0.0,
+    "Mario de Paz": 0.0
+}
+
+# Procesar PDF si se sube
 if archivo_subido is not None:
     try:
         if archivo_subido.name.endswith('.pdf'):
@@ -48,19 +59,46 @@ if archivo_subido is not None:
                     tabla = page.extract_table()
                     if tabla:
                         todas_las_filas.extend(tabla)
+            
             header_idx = -1
             for i, row in enumerate(todas_las_filas):
                 if row and any(isinstance(cell, str) and 'PROFESIONAL' in cell.upper() for cell in row):
                     header_idx = i
                     break
+            
             if header_idx != -1:
                 df = pd.DataFrame(todas_las_filas[header_idx+1:], columns=todas_las_filas[header_idx])
-    except Exception as e:
-        st.warning(f"Aviso de lectura de archivo: {e}")
+                df.columns = df.columns.astype(str).str.strip().str.upper().str.replace('\n', ' ')
+                col_prof = next((col for col in df.columns if 'PROFESIONAL' in col), None)
+                col_precio = next((col for col in df.columns if 'PRECIO' in col), None)
 
-# --- PANEL DE AJUSTE MANUAL Y DETALLADO POR EMPLEADO ---
-st.subheader("✍️ Detalle y Ajustes por Empleado")
-st.markdown("Personaliza comisiones, horas extra, bonos y notas de descuentos para cada integrante:")
+                if col_prof and col_precio:
+                    df = df.dropna(subset=[col_prof, col_precio])
+                    df[col_precio] = df[col_precio].astype(str).str.replace(r'[\$,\n]', '', regex=True)
+                    df[col_precio] = pd.to_numeric(df[col_precio], errors='coerce').fillna(0.0)
+
+                    # Cálculo automático para Maydely y Luis (servicios >= 60 menos 25% publicidad)
+                    def calc_may_luis(nombre):
+                        df_prof = df[df[col_prof].astype(str).str.contains(nombre, case=False, na=False)]
+                        df_extras = df_prof[df_prof[col_precio] >= 60].copy()
+                        df_extras['EXTRA_BASE'] = df_extras[col_precio] - 60
+                        total_bruto = df_extras['EXTRA_BASE'].sum()
+                        desc_pub = total_bruto * 0.25
+                        return max(0.0, total_bruto - desc_pub)
+
+                    sugerencias_comisiones["Maydely Hernández"] = calc_may_luis("MAYDELY")
+                    sugerencias_comisiones["Luis Violante"] = calc_may_luis("LUIS")
+
+                    # Cálculo automático para Jessica (Suma total de servicios x porcentaje configurable)
+                    jessica_trabajado = df[df[col_prof].astype(str).str.contains("JESSICA", case=False, na=False)][col_precio].sum()
+                    # Dejaremos un selector de porcentaje abajo, por defecto 20%
+                    st.success("¡Reporte PDF leído y comisiones calculadas con éxito!")
+    except Exception as e:
+        st.warning(f"No se pudo procesar automáticamente el PDF, se usarán valores manuales: {e}")
+
+# --- PANEL DE PERSONALIZACIÓN Y MODALIDADES ---
+st.subheader("✍️ Ajustes, Comisiones y Modalidades por Empleado")
+st.markdown("El sistema ha precargado los datos del PDF. Puedes modificar cualquier monto, cambiar porcentajes de comisión, agregar horas extra/bonos o anotar descuentos:")
 
 empleados_lista = [
     "Maydely Hernández", 
@@ -75,21 +113,36 @@ empleados_lista = [
 datos_empleados = []
 
 for emp in empleados_lista:
-    with st.expander(f"👤 {emp} - Ajustar Pagos y Descuentos"):
+    with st.expander(f"👤 {emp} - Configurar Planilla"):
         col1, col2, col3 = st.columns(3)
         
+        # Asignar bases según puesto
         base_sugerido = base_fijos if "Gio" in emp or "Gerson" in emp or "Edwin" in emp else base_masajistas
         
         with col1:
             sueldo_base = st.number_input(f"Sueldo Base ($) [{emp}]", value=float(base_sugerido), key=f"base_{emp}")
-            comision_extra = st.number_input(f"Comisiones / Servicios ($) [{emp}]", value=0.0, key=f"com_{emp}")
+            
+            # Comisión específica o calculada
+            comision_sug = sugerencias_comisiones.get(emp, 0.0)
+            if "Jessica" in emp:
+                # Modalidad especial de porcentaje para Jessica
+                porcentaje_jessica = st.slider("Porcentaje de Comisión Jessica (%)", min_value=0, max_value=100, value=20, key=f"porc_{emp}")
+                # Si se subió archivo, calculamos en base al total de Jessica * porcentaje
+                if archivo_subido is not None and 'df' in locals() and col_prof and col_precio:
+                    j_total_bruto = df[df[col_prof].astype(str).str.contains("JESSICA", case=False, na=False)][col_precio].sum()
+                    comision_sug = j_total_bruto * (porcentaje_jessica / 100.0)
+            
+            comision_extra = st.number_input(f"Comisiones / Servicios ($) [{emp}]", value=float(comision_sug), key=f"com_{emp}", step=5.0)
+
         with col2:
-            horas_extras = st.number_input(f"Horas Extra / Bonos ($) [{emp}]", value=0.0, key=f"hex_{emp}")
-            descuentos = st.number_input(f"Total Descuentos ($) [{emp}]", value=0.0, key=f"desc_{emp}")
+            horas_extras = st.number_input(f"Horas Extra / Bonos ($) [{emp}]", value=0.0, key=f"hex_{emp}", step=5.0)
+            descuentos = st.number_input(f"Total Descuentos ($) [{emp}]", value=0.0, key=f"desc_{emp}", step=5.0)
+        
         with col3:
-            nota_descuento = st.text_input(f"Nota / Motivo de Descuento [{emp}]", value="Ninguno", key=f"nota_{emp}")
+            nota_descuento = st.text_input(f"Nota / Motivo Descuento [{emp}]", value="Ninguno", key=f"nota_{emp}")
             email_emp = st.text_input(f"Correo Electrónico [{emp}]", value="gersonmolina67@gmail.com" if "Gerson" in emp else "", key=f"email_{emp}")
 
+        # Cálculo Final Individual
         total_bruto = sueldo_base + comision_extra + horas_extras
         total_neto = total_bruto - descuentos
         
@@ -111,7 +164,7 @@ st.dataframe(df_resumen[["Empleado", "Sueldo Base", "Comisiones", "Horas Extra/B
     "Sueldo Base": "{:.2f}", "Comisiones": "{:.2f}", "Horas Extra/Bonos": "{:.2f}", "Descuentos": "{:.2f}", "Total a Pagar ($)": "{:.2f}"
 }))
 
-# --- APARTADO DE GENERACIÓN Y ENVÍO DE RECIBOS PROFESIONALES ---
+# --- APARTADO DE CORREOS Y RECIBOS PDF ---
 st.subheader("✉️ Enviar Comprobantes en PDF por Gmail")
 empleado_seleccionado = st.selectbox("Selecciona a quién generar y enviar el recibo:", empleados_lista)
 
@@ -122,7 +175,6 @@ if st.button("Generar PDF y Enviar por Correo"):
         st.error(f"⚠️ El empleado {empleado_seleccionado} no tiene un correo electrónico válido registrado.")
     else:
         try:
-            # Generar PDF limpio y profesional con FPDF
             class PDF(FPDF):
                 def header(self):
                     self.set_font('helvetica', 'B', 16)
@@ -143,14 +195,12 @@ if st.button("Generar PDF y Enviar por Correo"):
             pdf = PDF()
             pdf.add_page()
             
-            # Caja de datos del empleado
             pdf.set_font('helvetica', 'B', 11)
             pdf.set_fill_color(240, 243, 246)
             pdf.set_text_color(50, 50, 50)
             pdf.cell(0, 10, f" Colaborador/a: {emp_data['Empleado']}", 0, 1, 'L', fill=True)
             pdf.ln(5)
 
-            # Tabla de conceptos
             pdf.set_font('helvetica', 'B', 10)
             pdf.set_fill_color(0, 86, 179)
             pdf.set_text_color(255, 255, 255)
@@ -171,14 +221,12 @@ if st.button("Generar PDF y Enviar por Correo"):
                 pdf.cell(130, 8, f"  {desc}", 1, 0, 'L')
                 pdf.cell(60, 8, f"${val:.2f} ", 1, 1, 'R')
 
-            # Fila Total Neto
             pdf.set_font('helvetica', 'B', 11)
             pdf.set_fill_color(230, 235, 240)
             pdf.cell(130, 10, "  TOTAL NETO A RECIBIR", 1, 0, 'L', fill=True)
             pdf.cell(60, 10, f"${emp_data['Total a Pagar ($)']:.2f} ", 1, 1, 'R', fill=True)
             pdf.ln(8)
 
-            # Apartado de Notas
             pdf.set_font('helvetica', 'B', 10)
             pdf.set_text_color(0, 86, 179)
             pdf.cell(0, 6, "Motivo / Nota de Descuentos o Ajustes:", 0, 1, 'L')
@@ -187,11 +235,9 @@ if st.button("Generar PDF y Enviar por Correo"):
             pdf.set_text_color(50, 50, 50)
             pdf.multi_cell(0, 6, emp_data['Nota Descuento'], 1, 'L')
 
-            # Guardar PDF localmente
             pdf_path = f"Recibo_{empleado_seleccionado.replace(' ', '_')}.pdf"
             pdf.output(pdf_path)
 
-            # Envío por correo utilizando los Secrets configurados
             remitente_email = st.secrets["EMAIL_USER"]
             password_email = st.secrets["EMAIL_PASS"]
 
