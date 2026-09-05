@@ -54,7 +54,7 @@ if "empleados" not in st.session_state:
 # El bruto consolidado se calcula sobre el NETO ACUMULADO del período completo,
 # evitando el error de redondeo que surgía al redondear quincena por quincena.
 # Ej. Admin: neto $300 x 8 quincenas = $2,400 -> base = 2400/0.90 = $2,666.67
-#      renta 10% = $266.67 -> neto líquido exacto $2,400.00
+#     renta 10% = $266.67 -> neto líquido exacto $2,400.00
 def calcular_bruto_base(rol, quincenas=None):
     neto = st.session_state["salario_operativo_neto"] if rol == "Operativo" else st.session_state["salario_directivo_neto"]
     if quincenas is None:
@@ -176,6 +176,7 @@ if menu_seleccionado != "Configuración":
                 todas_las_filas = []
                 with pdfplumber.open(archivo_subido) as pdf:
                     for page in pdf.pages:
+                        # FIX #1: extract_text() puede devolver None en páginas escaneadas.
                         texto_pagina = page.extract_text() or ""
                         texto_completo += texto_pagina + " "
                         tabla = page.extract_table()
@@ -197,8 +198,6 @@ if menu_seleccionado != "Configuración":
                 dias_diff = (max_fecha - min_fecha).days + 1
 
                 # REQUISITO 1 (INTELIGENCIA DE TIEMPO BASADA EN QUINCENAS):
-                # Cada mes equivale a 2 quincenas. El factor se deriva matemáticamente
-                # del rango de fechas y se aplica sobre el neto acumulado completo.
                 if dias_diff <= 16:
                     factor_mult = 1.0
                     texto_periodo = f"Del {min_fecha.strftime('%d/%m/%Y')} al {max_fecha.strftime('%d/%m/%Y')} (1 Quincena)"
@@ -207,7 +206,7 @@ if menu_seleccionado != "Configuración":
                     texto_periodo = f"Del {min_fecha.strftime('%d/%m/%Y')} al {max_fecha.strftime('%d/%m/%Y')} (1 Mes / 2 Quincenas)"
                 else:
                     meses_calculados = max(2, round(dias_diff / 30.0))
-                    factor_mult = float(meses_calculados * 2.0)  # Cada mes son 2 quincenas
+                    factor_mult = float(meses_calculados * 2.0)
                     texto_periodo = f"Del {min_fecha.strftime('%d/%m/%Y')} al {max_fecha.strftime('%d/%m/%Y')} ({meses_calculados} Meses / {int(factor_mult)} Quincenas)"
 
                 st.session_state["quincenas_multiplicador"] = factor_mult
@@ -226,6 +225,7 @@ if menu_seleccionado != "Configuración":
 
                     if col_prof and col_precio:
                         df_reporte = df_reporte.dropna(subset=[col_prof, col_precio])
+                        # FIX #3: Limpiar encabezados repetidos
                         df_reporte = df_reporte[~df_reporte[col_prof].astype(str).str.upper().str.contains('PROFESIONAL', na=False)]
                         df_reporte[col_precio] = df_reporte[col_precio].astype(str).str.replace(r'[\$,\n]', '', regex=True)
                         df_reporte[col_precio] = pd.to_numeric(df_reporte[col_precio], errors='coerce').fillna(0.0)
@@ -254,7 +254,7 @@ if menu_seleccionado != "Configuración":
                             if "Porcentaje" in mod_actual:
                                 st.session_state[f"base_{emp}"] = 0.0
                             else:
-                                # REQUISITO 1: base consolidada del período completo (sin error de redondeo)
+                                # REQUISITO 1: base consolidada del período completo
                                 st.session_state[f"base_{emp}"] = calcular_bruto_base(info["rol"])
 
                             df_p = df_reporte[df_reporte[col_prof].astype(str).str.contains(info["alias"], case=False, na=False, regex=True)]
@@ -264,7 +264,6 @@ if menu_seleccionado != "Configuración":
                             # REQUISITO 2 (REGLAS FISCALES Y DE RETENCIÓN):
                             if info["rol"] == "Operativo":
                                 if "Estándar" in mod_actual:
-                                    # Extra Bruto = servicios > $60; se retiene 25% publicidad y 75% = comisión neta
                                     df_ex = df_p[df_p[col_precio] >= 60].copy()
                                     ext_bruto_total = (df_ex[col_precio] - 60).sum() if not df_ex.empty else 0.0
                                     desc_pub = ext_bruto_total * 0.25
@@ -286,6 +285,10 @@ if menu_seleccionado != "Configuración":
                                 st.session_state[f"ret_pub_{emp}"] = 0.0
 
                         st.success(f"✅ ¡PDF analizado con éxito! {st.session_state['periodo_texto']}")
+                    else:
+                        st.warning("⚠️ Se encontró una tabla, pero no se pudieron identificar las columnas 'PROFESIONAL' y 'PRECIO'. Verifica el formato del PDF.")
+                else:
+                    st.warning("⚠️ No se detectó ninguna tabla con encabezado 'PROFESIONAL' en el PDF. No se sincronizaron datos.")
             except Exception as e:
                 st.error(f"Error procesando PDF: {e}")
 
@@ -307,8 +310,7 @@ if menu_seleccionado == "Dashboard":
         col3.metric("🏦 Utilidad Neta Real", f"${utilidad_neta:,.2f}", delta=f"{((utilidad_neta/st.session_state['total_ingresos_pdf'])*100):.1f}% Margen")
 
         st.markdown("<br>", unsafe_allow_html=True)
-        # REQUISITO 4 (COLABORADOR ESTRELLA / MVP): se calcula automáticamente
-        # con el mayor total de facturación en servicios del período.
+        # REQUISITO 4 (COLABORADOR ESTRELLA / MVP)
         estrella_collab = max(st.session_state["empleados"].keys(), key=lambda e: st.session_state.get(f"serv_tot_{e}", 0.0))
         monto_estrella = st.session_state.get(f"serv_tot_{estrella_collab}", 0.0)
 
@@ -342,10 +344,11 @@ if menu_seleccionado == "Dashboard":
         with c_chart: st.bar_chart(pd.DataFrame.from_dict(marcas, orient='index', columns=['Ingresos Brutos ($)']))
         with c_table: st.dataframe(df_marcas.style.format({"Ingresos Brutos": "${:,.2f}", "Extras Brutos": "${:,.2f}", "NETO CLÍNICA": "${:,.2f}", "Meta Asignada": "${:,.2f}"}), hide_index=True)
     else:
-        st.info("Sube el PDF de ingresos para generar el reporte corporativo.")
+        st.info("Sube un reporte PDF en la parte superior para habilitar las métricas y la Persona Estrella del Dashboard.")
 
 elif menu_seleccionado == "Planillas":
     st.markdown("<h2 style='color:#0F172A;'>Control Financiero de Planillas</h2>", unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
     datos_emp = []
 
     for emp, info in st.session_state["empleados"].items():
@@ -391,7 +394,6 @@ elif menu_seleccionado == "Planillas":
                 st.session_state[f"email_{emp}"] = e_em
 
             # REQUISITO 2: 10% de renta SOLO sobre la columna "Sueldo Base (Bruto)".
-            # Prohibido para modalidad "Porcentaje Directo (%)" (sueldo base $0.00, comisión íntegra).
             if info["rol"] == "Operativo" and "Porcentaje" in mod_actual:
                 renta_calculada = 0.0
             else:
@@ -516,7 +518,6 @@ GIO GROUP SAS DE CV
 
                     msg.attach(MIMEText(cuerpo_correo, 'plain'))
 
-                    # REQUISITO 6: se adjunta el binario del recibo en memoria (MIMEApplication).
                     parte_adjunta = MIMEApplication(st.session_state['t_pdf'], Name=st.session_state['t_path'])
                     parte_adjunta['Content-Disposition'] = f'attachment; filename="{st.session_state["t_path"]}"'
                     msg.attach(parte_adjunta)
