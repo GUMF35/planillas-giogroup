@@ -33,11 +33,11 @@ try:
 except Exception:
     st.set_page_config(page_title="Gio Group Admin", page_icon="🏢", layout="wide")
 
-# --- 2. BASE DE DATOS EN MEMORIA (BASADO EN QUINCENAS) ---
-if "salario_operativo_neto" not in st.session_state: st.session_state["salario_operativo_neto"] = 183.96 # POR QUINCENA
-if "salario_directivo_neto" not in st.session_state: st.session_state["salario_directivo_neto"] = 300.00 # POR QUINCENA
+# --- 2. BASE DE DATOS EN MEMORIA (CÁLCULO EXACTO POR QUINCENAS) ---
+if "salario_operativo_neto" not in st.session_state: st.session_state["salario_operativo_neto"] = 183.96 # Neto por Quincena
+if "salario_directivo_neto" not in st.session_state: st.session_state["salario_directivo_neto"] = 300.00 # Neto por Quincena
 if "quincenas_multiplicador" not in st.session_state: st.session_state["quincenas_multiplicador"] = 1.0
-if "periodo_texto" not in st.session_state: st.session_state["periodo_texto"] = "1 Quincena"
+if "periodo_texto" not in st.session_state: st.session_state["periodo_texto"] = "1 Quincena (Por defecto)"
 
 if "empleados" not in st.session_state:
     st.session_state["empleados"] = {
@@ -50,11 +50,12 @@ if "empleados" not in st.session_state:
         "Edwin Ponce": {"rol": "Administrativo", "alias": "EDWIN", "mod": "Fijo", "porc": 0}
     }
 
-def calcular_bruto_base(rol, quincenas=None):
-    neto = st.session_state["salario_operativo_neto"] if rol == "Operativo" else st.session_state["salario_directivo_neto"]
-    if quincenas is None:
-        quincenas = st.session_state["quincenas_multiplicador"]
-    return round((neto * quincenas) / 0.90, 2)
+def calcular_bruto_acumulado(rol, quincenas=None):
+    # Calcula primero el neto total del período para asegurar exactitud matemática al 100%
+    neto_quincenal = st.session_state["salario_operativo_neto"] if rol == "Operativo" else st.session_state["salario_directivo_neto"]
+    mult = quincenas if quincenas is not None else st.session_state["quincenas_multiplicador"]
+    neto_acumulado = neto_quincenal * mult
+    return round(neto_acumulado / 0.90, 2)
 
 for emp, info in st.session_state["empleados"].items():
     if f"com_{emp}" not in st.session_state: st.session_state[f"com_{emp}"] = 0.0
@@ -71,7 +72,7 @@ for emp, info in st.session_state["empleados"].items():
         if f"base_{emp}" not in st.session_state: st.session_state[f"base_{emp}"] = 0.0
     else:
         if f"base_{emp}" not in st.session_state:
-            st.session_state[f"base_{emp}"] = calcular_bruto_base(info["rol"])
+            st.session_state[f"base_{emp}"] = calcular_bruto_acumulado(info["rol"])
 
 if "historial_auditoria" not in st.session_state: st.session_state["historial_auditoria"] = []
 if "ingresos_por_marca" not in st.session_state: st.session_state["ingresos_por_marca"] = {}
@@ -138,14 +139,13 @@ with st.sidebar:
 if menu_seleccionado != "Configuración":
     with st.container():
         st.markdown("<h2 style='color:#0F172A; font-weight:800;'>Bienvenido, Administración 👋</h2>", unsafe_allow_html=True)
-        st.info(f"📅 **Período analizado:** {st.session_state['periodo_texto']}")
 
         col_up1, col_up2 = st.columns([3, 1])
         with col_up1:
             archivo_subido = st.file_uploader("📥 Sincronizar reporte de ventas (PDF)", type=["pdf"])
         with col_up2:
             st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("🗑️ Limpiar Reporte PDF"):
+            if st.button("🧹 Limpiar Reporte PDF"):
                 st.session_state["total_ingresos_pdf"] = 0.0
                 st.session_state["ingresos_por_marca"] = {}
                 st.session_state["extras_por_marca"] = {}
@@ -157,7 +157,10 @@ if menu_seleccionado != "Configuración":
                     st.session_state[f"extra_bruto_{emp}"] = 0.0
                     st.session_state[f"ret_pub_{emp}"] = 0.0
                     st.session_state[f"serv_tot_{emp}"] = 0.0
-                st.success("¡Datos del PDF borrados exitosamente! (Sueldos base y correos mantenidos)")
+                    if "Porcentaje" in st.session_state.get(f"mod_{emp}", info["mod"]):
+                        st.session_state[f"base_{emp}"] = 0.0
+                    else:
+                        st.session_state[f"base_{emp}"] = calcular_bruto_acumulado(info["rol"], 1.0)
                 st.rerun()
 
         if archivo_subido is not None:
@@ -240,7 +243,7 @@ if menu_seleccionado != "Configuración":
                             if "Porcentaje" in mod_actual:
                                 st.session_state[f"base_{emp}"] = 0.0
                             else:
-                                st.session_state[f"base_{emp}"] = calcular_bruto_base(info["rol"])
+                                st.session_state[f"base_{emp}"] = calcular_bruto_acumulado(info["rol"], st.session_state["quincenas_multiplicador"])
 
                             df_p = df_reporte[df_reporte[col_prof].astype(str).str.contains(info["alias"], case=False, na=False, regex=True)]
                             tot_serv = df_p[col_precio].sum()
@@ -267,7 +270,7 @@ if menu_seleccionado != "Configuración":
                                 st.session_state[f"com_{emp}"] = 0.0
                                 st.session_state[f"ret_pub_{emp}"] = 0.0
 
-                        st.success(f"✅ ¡PDF analizado con éxito! {st.session_state['periodo_texto']}")
+                        st.success(f"✅ ¡PDF analizado con éxito!")
                     else:
                         st.warning("⚠️ Se encontró una tabla, pero no se pudieron identificar las columnas 'PROFESIONAL' y 'PRECIO'.")
                 else:
@@ -275,6 +278,7 @@ if menu_seleccionado != "Configuración":
             except Exception as e:
                 st.error(f"Error procesando PDF: {e}")
 
+        st.info(f"📅 **Período en análisis:** {st.session_state['periodo_texto']}")
     st.markdown("<br>", unsafe_allow_html=True)
 
 # --- 6. ENRUTAMIENTO DE PÁGINAS ---
@@ -282,7 +286,7 @@ if menu_seleccionado != "Configuración":
 if menu_seleccionado == "Dashboard":
     if st.session_state["total_ingresos_pdf"] > 0:
         costo_planilla = sum([
-            st.session_state[f"base_{emp}"] + st.session_state[f"com_{emp}"] + st.session_state[f"hex_{emp}"] - st.session_state[f"desc_{emp}"] - (0.0 if "Porcentaje" in st.session_state.get(f"mod_{emp}", st.session_state["empleados"][emp]["mod"]) and st.session_state["empleados"][emp]["rol"] == "Operativo" else st.session_state[f"base_{emp}"] * 0.10)
+            round(st.session_state[f"base_{emp}"] + st.session_state[f"com_{emp}"] + st.session_state[f"hex_{emp}"] - st.session_state[f"desc_{emp}"] - (0.0 if "Porcentaje" in st.session_state.get(f"mod_{emp}", st.session_state["empleados"][emp]["mod"]) and st.session_state["empleados"][emp]["rol"] == "Operativo" else round(st.session_state[f"base_{emp}"] * 0.10, 2)), 2)
             for emp in st.session_state["empleados"].keys()
         ])
         utilidad_neta = st.session_state["total_ingresos_pdf"] - costo_planilla
@@ -377,12 +381,12 @@ elif menu_seleccionado == "Planillas":
             if info["rol"] == "Operativo" and "Porcentaje" in mod_actual:
                 renta_calculada = 0.0
             else:
-                renta_calculada = st.session_state[f"base_{emp}"] * 0.10
+                renta_calculada = round(st.session_state[f"base_{emp}"] * 0.10, 2)
 
-            extra_bruto_val = st.session_state.get(f"extra_bruto_{emp}", 0.0)
-            ret_pub_actual = st.session_state.get(f"ret_pub_{emp}", 0.0)
+            extra_bruto_val = round(st.session_state.get(f"extra_bruto_{emp}", 0.0), 2)
+            ret_pub_actual = round(st.session_state.get(f"ret_pub_{emp}", 0.0), 2)
 
-            t_net = st.session_state[f"base_{emp}"] + st.session_state[f"com_{emp}"] + st.session_state[f"hex_{emp}"] - renta_calculada - st.session_state[f"desc_{emp}"]
+            t_net = round(st.session_state[f"base_{emp}"] + st.session_state[f"com_{emp}"] + st.session_state[f"hex_{emp}"] - renta_calculada - st.session_state[f"desc_{emp}"], 2)
 
             datos_emp.append({
                 "Colaborador": emp,
@@ -404,7 +408,7 @@ elif menu_seleccionado == "Planillas":
         st.dataframe(df_res.style.format({
             "Sueldo Base (Bruto)": "${:.2f}",
             "Extra Bruto": "${:,.2f}",
-            "Retención Pub (25%)": "${:,.2f}",
+            "Retención Pub (25%)": "${:.2f}",
             "Comisiones Netas": "${:.2f}",
             "Bonos": "${:.2f}",
             "Descuentos": "${:.2f}",
@@ -603,7 +607,7 @@ elif menu_seleccionado == "Configuración":
             st.session_state["quincenas_multiplicador"] = float(meses_manual)
             for emp, info in st.session_state["empleados"].items():
                 if not "Porcentaje" in info["mod"]:
-                    st.session_state[f"base_{emp}"] = calcular_bruto_base(info["rol"])
+                    st.session_state[f"base_{emp}"] = calcular_bruto_acumulado(info["rol"])
             st.success("Multiplicador manual aplicado.")
             st.rerun()
 
@@ -634,7 +638,7 @@ elif menu_seleccionado == "Configuración":
                     if "Porcentaje" in n_mod:
                         st.session_state[f"base_{n_nombre}"] = 0.0
                     else:
-                        st.session_state[f"base_{n_nombre}"] = calcular_bruto_base(n_rol)
+                        st.session_state[f"base_{n_nombre}"] = calcular_bruto_acumulado(n_rol)
                     st.success(f"{n_nombre} guardado exitosamente.")
                     st.rerun()
             else:
