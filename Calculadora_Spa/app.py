@@ -14,6 +14,32 @@ import base64
 from PIL import Image
 from streamlit_option_menu import option_menu
 
+# --- 0. UTILIDADES DE SEGURIDAD / ROBUSTEZ (NUEVO) ---
+
+def limpiar_texto_pdf(txt):
+    """
+    FIX #2: FPDF (fuente 'helvetica') solo soporta Latin-1.
+    Si el usuario escribe emojis, guiones largos, comillas curvas, etc.
+    en un memorándum o amonestación, FPDF lanza una excepción y rompe
+    la generación del PDF. Esta función reemplaza cualquier carácter
+    no soportado en vez de tronar la app.
+    """
+    if txt is None:
+        return ""
+    return str(txt).encode('latin-1', 'replace').decode('latin-1')
+
+
+def generar_pdf_bytes(pdf_obj):
+    """
+    FIX #5: en vez de escribir el PDF a disco con un nombre fijo
+    (riesgo de que dos usuarios/generaciones simultáneas se pisen
+    en Streamlit Cloud), devolvemos los bytes directamente en memoria.
+    """
+    salida = pdf_obj.output()
+    # fpdf2 puede devolver bytearray; normalizamos a bytes puros
+    return bytes(salida)
+
+
 # --- 1. CONFIGURACIÓN DE PÁGINA ---
 logo_path = os.path.join(os.path.dirname(__file__), "logo.png")
 try:
@@ -22,7 +48,10 @@ try:
         st.set_page_config(page_title="Gio Group Admin", page_icon=icono, layout="wide", initial_sidebar_state="expanded")
     else:
         st.set_page_config(page_title="Gio Group Admin", page_icon="🏢", layout="wide", initial_sidebar_state="expanded")
-except:
+except Exception as e:
+    # FIX #7: ya no se traga el error en silencio; se deja constancia y se
+    # sigue con una configuración segura por defecto.
+    st.session_state.setdefault("_errores_arranque", []).append(f"Error cargando ícono/logo: {e}")
     st.set_page_config(page_title="Gio Group Admin", page_icon="🏢", layout="wide")
 
 # --- 2. BASE DE DATOS EN MEMORIA (ROLES Y CONFIGURACIÓN EXACTA) ---
@@ -53,7 +82,13 @@ for emp, info in st.session_state["empleados"].items():
     if f"serv_tot_{emp}" not in st.session_state: st.session_state[f"serv_tot_{emp}"] = 0.0
     if f"hex_{emp}" not in st.session_state: st.session_state[f"hex_{emp}"] = 0.0
     if f"desc_{emp}" not in st.session_state: st.session_state[f"desc_{emp}"] = 0.0
-    if f"email_{emp}" not in st.session_state: st.session_state[f"email_{emp}"] = "gersonmolina67@gmail.com"
+    # FIX #6: antes el correo por defecto de TODOS los colaboradores era el
+    # correo personal del admin (gersonmolina67@gmail.com). Eso significa
+    # que si alguien olvida configurar el correo real del colaborador, su
+    # recibo de pago (información sensible) se envía al admin en vez de a
+    # la persona correcta. Ahora queda vacío y se exige llenarlo antes de
+    # poder enviar.
+    if f"email_{emp}" not in st.session_state: st.session_state[f"email_{emp}"] = ""
     if f"porc_{emp}" not in st.session_state: st.session_state[f"porc_{emp}"] = info["porc"]
     
     mod_init = info["mod"]
@@ -139,7 +174,12 @@ if menu_seleccionado != "Configuración":
                 todas_las_filas = []
                 with pdfplumber.open(archivo_subido) as pdf:
                     for page in pdf.pages:
-                        texto_completo += page.extract_text() + " "
+                        # FIX #1: extract_text() puede devolver None en páginas
+                        # escaneadas/sin texto seleccionable. Antes esto causaba
+                        # "TypeError: unsupported operand type(s) for +: 'NoneType' and 'str'"
+                        # y tumbaba toda la app al subir ciertos PDFs.
+                        texto_pagina = page.extract_text() or ""
+                        texto_completo += texto_pagina + " "
                         tabla = page.extract_table()
                         if tabla: todas_las_filas.extend(tabla)
                 
@@ -184,6 +224,15 @@ if menu_seleccionado != "Configuración":
 
                     if col_prof and col_precio:
                         df_reporte = df_reporte.dropna(subset=[col_prof, col_precio])
+
+                        # FIX #3: en PDFs de varias páginas, el encabezado de la
+                        # tabla ("PROFESIONAL", "PRECIO", etc.) suele repetirse
+                        # en cada página y se colaba como si fuera una fila de
+                        # datos real. La filtramos explícitamente.
+                        df_reporte = df_reporte[
+                            ~df_reporte[col_prof].astype(str).str.upper().str.contains('PROFESIONAL', na=False)
+                        ]
+
                         df_reporte[col_precio] = df_reporte[col_precio].astype(str).str.replace(r'[\$,\n]', '', regex=True)
                         df_reporte[col_precio] = pd.to_numeric(df_reporte[col_precio], errors='coerce').fillna(0.0)
 
@@ -238,6 +287,13 @@ if menu_seleccionado != "Configuración":
                                 st.session_state[f"ret_pub_{emp}"] = 0.0
 
                         st.success(f"✅ ¡PDF analizado con éxito! Período detectado: {st.session_state['periodo_texto']}")
+                    else:
+                        # FIX #4: antes, si no se encontraban las columnas
+                        # PROFESIONAL/PRECIO, el PDF se descartaba sin ningún
+                        # aviso y el admin creía que ya estaba sincronizado.
+                        st.warning("⚠️ Se encontró una tabla, pero no se pudieron identificar las columnas 'PROFESIONAL' y 'PRECIO'. Verifica el formato del PDF.")
+                else:
+                    st.warning("⚠️ No se detectó ninguna tabla con encabezado 'PROFESIONAL' en el PDF. No se sincronizaron datos.")
             except Exception as e:
                 st.error(f"Error procesando PDF: {e}")
 
@@ -339,7 +395,7 @@ elif menu_seleccionado == "Planillas":
             
             with c3:
                 n_desc = st.text_input(f"Notas", value="Ninguno", key=f"n_{emp}")
-                e_em = st.text_input(f"Correo", value=st.session_state[f"email_{emp}"], key=f"ui_e_{emp}")
+                e_em = st.text_input(f"Correo", value=st.session_state[f"email_{emp}"], key=f"ui_e_{emp}", placeholder="correo@ejemplo.com")
                 st.session_state[f"email_{emp}"] = e_em
 
             if info["rol"] == "Operativo" and "Porcentaje" in mod_actual:
@@ -397,18 +453,18 @@ elif menu_seleccionado == "Planillas":
                     if os.path.exists(logo_path): self.set_x(40)
                     self.set_font('helvetica', '', 10); self.set_text_color(100, 100, 100); self.cell(0, 5, 'Comprobante Oficial de Pago', 0, 1, 'L')
                     if os.path.exists(logo_path): self.set_x(40)
-                    self.cell(0, 5, f"Periodo Liquidado: {st.session_state['periodo_texto']}", 0, 1, 'L')
+                    self.cell(0, 5, limpiar_texto_pdf(f"Periodo Liquidado: {st.session_state['periodo_texto']}"), 0, 1, 'L')
                     self.ln(5)
             
             pdf = PDF(); pdf.add_page(); pdf.set_font('helvetica', 'B', 11); pdf.set_fill_color(243, 244, 246)
-            pdf.cell(0, 10, f" Colaborador: {e_dat['Colaborador']}", 0, 1, 'L', fill=True); pdf.ln(5)
+            pdf.cell(0, 10, limpiar_texto_pdf(f" Colaborador: {e_dat['Colaborador']}"), 0, 1, 'L', fill=True); pdf.ln(5)
             pdf.set_fill_color(10, 25, 47); pdf.set_text_color(255, 255, 255)
             pdf.cell(130, 8, ' Concepto', 1, 0, 'L', fill=True); pdf.cell(60, 8, ' Monto ($)', 1, 1, 'R', fill=True)
             pdf.set_font('helvetica', '', 10); pdf.set_text_color(50, 50, 50)
             
             for d, v in [("Sueldo Base Acumulado (Bruto)", e_dat['Sueldo Base (Bruto)']), ("Extra Bruto Generado", e_dat['Extra Bruto']), ("Comisiones Netas a Pagar", e_dat['Comisiones Netas']), ("Bonos Extras", e_dat['Bonos'])]:
                 if v > 0 or "Sueldo" in d or "Comisiones" in d:
-                    pdf.cell(130, 8, f"  {d}", 1, 0, 'L'); pdf.cell(60, 8, f"${v:.2f}", 1, 1, 'R')
+                    pdf.cell(130, 8, limpiar_texto_pdf(f"  {d}"), 1, 0, 'L'); pdf.cell(60, 8, f"${v:.2f}", 1, 1, 'R')
             
             pdf.set_text_color(201, 42, 42)
             if e_dat['Descuentos'] > 0:
@@ -423,13 +479,21 @@ elif menu_seleccionado == "Planillas":
             pdf.set_font('helvetica', 'B', 11); pdf.set_fill_color(243, 244, 246); pdf.set_text_color(10, 25, 47)
             pdf.cell(130, 10, "  TOTAL LÍQUIDO A RECIBIR", 1, 0, 'L', fill=True); pdf.cell(60, 10, f"${e_dat['Total a Pagar']:.2f}", 1, 1, 'R', fill=True)
             
-            p_path = f"Recibo_{e_sel.replace(' ','_')}.pdf"; pdf.output(p_path)
-            with open(p_path, "rb") as f: st.session_state['t_pdf'] = f.read(); st.session_state['t_path'] = p_path
+            # FIX #5: se genera en memoria (bytes) en vez de escribir a disco
+            # con un nombre fijo que podía colisionar entre usuarios/sesiones
+            # concurrentes en Streamlit Cloud.
+            nombre_archivo = f"Recibo_{e_sel.replace(' ','_')}.pdf"
+            st.session_state['t_pdf'] = generar_pdf_bytes(pdf)
+            st.session_state['t_path'] = nombre_archivo
 
         if 't_pdf' in st.session_state:
             st.download_button("📄 Descargar Recibo PDF", data=st.session_state['t_pdf'], file_name=st.session_state['t_path'], mime="application/pdf")
             
-            if st.button("🚀 Enviar Recibo por Gmail al Colaborador"):
+            correo_destino_valido = bool(e_dat["Email"]) and "@" in e_dat["Email"]
+            if not correo_destino_valido:
+                st.warning("⚠️ Este colaborador no tiene un correo válido configurado. Ingresa uno arriba antes de enviarlo.")
+
+            if st.button("🚀 Enviar Recibo por Gmail al Colaborador", disabled=not correo_destino_valido):
                 try:
                     remitente = st.secrets["EMAIL_USER"]
                     password = st.secrets["EMAIL_PASS"]
@@ -458,10 +522,11 @@ GIO GROUP SAS DE CV
                     
                     msg.attach(MIMEText(cuerpo_correo, 'plain'))
                     
-                    with open(st.session_state['t_path'], "rb") as adjunto_file:
-                        parte_adjunta = MIMEApplication(adjunto_file.read(), Name=st.session_state['t_path'])
-                        parte_adjunta['Content-Disposition'] = f'attachment; filename="{st.session_state["t_path"]}"'
-                        msg.attach(parte_adjunta)
+                    # FIX #5 (cont.): adjuntamos directamente los bytes en
+                    # memoria, ya no dependemos de un archivo en disco.
+                    parte_adjunta = MIMEApplication(st.session_state['t_pdf'], Name=st.session_state['t_path'])
+                    parte_adjunta['Content-Disposition'] = f'attachment; filename="{st.session_state["t_path"]}"'
+                    msg.attach(parte_adjunta)
                     
                     servidor_smtp = smtplib.SMTP('smtp.gmail.com', 587)
                     servidor_smtp.starttls()
@@ -491,10 +556,14 @@ elif menu_seleccionado == "Memorándums":
                     if os.path.exists(logo_path): self.image(logo_path, 10, 8, 25); self.set_x(40)
                     self.set_font('helvetica', 'B', 16); self.set_text_color(10, 25, 47); self.cell(0, 10, 'GIO GROUP SAS DE CV', 0, 1, 'L'); self.ln(5)
             pdf_m = PDFMemo(); pdf_m.add_page(); pdf_m.set_font('helvetica', 'B', 11)
-            pdf_m.cell(0, 10, f" Entregado a: {emp_memo}", 0, 1, 'L'); pdf_m.cell(0, 10, f" Asunto Central: {asunto_memo}", 0, 1, 'L')
-            pdf_m.set_font('helvetica', '', 11); pdf_m.multi_cell(0, 7, texto_memo, 0, 'L')
-            m_path = f"Memorandum_{emp_memo.replace(' ','_')}.pdf"; pdf_m.output(m_path)
-            with open(m_path, "rb") as f: st.session_state['temp_memo_pdf'] = f.read(); st.session_state['temp_memo_path'] = m_path
+            pdf_m.cell(0, 10, limpiar_texto_pdf(f" Entregado a: {emp_memo}"), 0, 1, 'L'); pdf_m.cell(0, 10, limpiar_texto_pdf(f" Asunto Central: {asunto_memo}"), 0, 1, 'L')
+            pdf_m.set_font('helvetica', '', 11); pdf_m.multi_cell(0, 7, limpiar_texto_pdf(texto_memo), 0, 'L')
+            # FIX #5: PDF generado en memoria, sin escribir a disco.
+            nombre_memo = f"Memorandum_{emp_memo.replace(' ','_')}.pdf"
+            st.session_state['temp_memo_pdf'] = generar_pdf_bytes(pdf_m)
+            st.session_state['temp_memo_path'] = nombre_memo
+        else:
+            st.warning("⚠️ Escribe el cuerpo del memorándum antes de generarlo.")
 
     if 'temp_memo_pdf' in st.session_state:
         st.download_button("📄 Descargar Archivo PDF", data=st.session_state['temp_memo_pdf'], file_name=st.session_state['temp_memo_path'])
@@ -512,9 +581,13 @@ elif menu_seleccionado == "Amonestaciones":
                     if os.path.exists(logo_path): self.image(logo_path, 10, 8, 25); self.set_x(40)
                     self.set_font('helvetica', 'B', 16); self.set_text_color(201, 42, 42); self.cell(0, 10, 'GIO GROUP SAS DE CV', 0, 1, 'L'); self.ln(5)
             pdf_a = PDFAmon(); pdf_a.add_page(); pdf_a.set_font('helvetica', 'B', 11)
-            pdf_a.cell(0, 10, f" Dirigido a: {emp_amon}", 0, 1, 'L'); pdf_a.multi_cell(0, 7, motivo_amon, 1, 'L')
-            a_path = f"Acta_Amonestacion_{emp_amon.replace(' ','_')}.pdf"; pdf_a.output(a_path)
-            with open(a_path, "rb") as f: st.session_state['temp_amon_pdf'] = f.read(); st.session_state['temp_amon_path'] = a_path
+            pdf_a.cell(0, 10, limpiar_texto_pdf(f" Dirigido a: {emp_amon}"), 0, 1, 'L'); pdf_a.multi_cell(0, 7, limpiar_texto_pdf(motivo_amon), 1, 'L')
+            # FIX #5: PDF generado en memoria, sin escribir a disco.
+            nombre_amon = f"Acta_Amonestacion_{emp_amon.replace(' ','_')}.pdf"
+            st.session_state['temp_amon_pdf'] = generar_pdf_bytes(pdf_a)
+            st.session_state['temp_amon_path'] = nombre_amon
+        else:
+            st.warning("⚠️ Describe el incidente antes de generar el acta.")
 
     if 'temp_amon_pdf' in st.session_state:
         st.download_button("📄 Descargar Acta Formal", data=st.session_state['temp_amon_pdf'], file_name=st.session_state['temp_amon_path'])
@@ -562,20 +635,27 @@ elif menu_seleccionado == "Configuración":
         n_alias = st.text_input("Alias PDF (Ej. MARIA):")
         if st.button("➕ Registrar"):
             if n_nombre and n_alias:
-                st.session_state["empleados"][n_nombre] = {"rol": n_rol, "alias": n_alias.upper(), "mod": n_mod, "porc": n_porc}
-                st.session_state[f"com_{n_nombre}"] = 0.0
-                st.session_state[f"extra_bruto_{n_nombre}"] = 0.0
-                st.session_state[f"ret_pub_{n_nombre}"] = 0.0
-                st.session_state[f"serv_tot_{n_nombre}"] = 0.0
-                st.session_state[f"email_{n_nombre}"] = "gersonmolina67@gmail.com"
-                st.session_state[f"hex_{n_nombre}"] = 0.0
-                st.session_state[f"desc_{n_nombre}"] = 0.0
-                if "Porcentaje" in n_mod:
-                    st.session_state[f"base_{n_nombre}"] = 0.0
+                if n_nombre in st.session_state["empleados"]:
+                    st.error(f"Ya existe un colaborador registrado como '{n_nombre}'.")
                 else:
-                    st.session_state[f"base_{n_nombre}"] = calcular_bruto_mensual(n_rol) * st.session_state["meses_multiplicador"]
-                st.success(f"{n_nombre} guardado exitosamente.")
-                st.rerun()
+                    st.session_state["empleados"][n_nombre] = {"rol": n_rol, "alias": n_alias.upper(), "mod": n_mod, "porc": n_porc}
+                    st.session_state[f"com_{n_nombre}"] = 0.0
+                    st.session_state[f"extra_bruto_{n_nombre}"] = 0.0
+                    st.session_state[f"ret_pub_{n_nombre}"] = 0.0
+                    st.session_state[f"serv_tot_{n_nombre}"] = 0.0
+                    # FIX #6: ya no se precarga con el correo del admin.
+                    st.session_state[f"email_{n_nombre}"] = ""
+                    st.session_state[f"hex_{n_nombre}"] = 0.0
+                    st.session_state[f"desc_{n_nombre}"] = 0.0
+                    st.session_state[f"porc_{n_nombre}"] = n_porc
+                    if "Porcentaje" in n_mod:
+                        st.session_state[f"base_{n_nombre}"] = 0.0
+                    else:
+                        st.session_state[f"base_{n_nombre}"] = calcular_bruto_mensual(n_rol) * st.session_state["meses_multiplicador"]
+                    st.success(f"{n_nombre} guardado exitosamente.")
+                    st.rerun()
+            else:
+                st.warning("⚠️ Ingresa nombre completo y alias antes de registrar.")
 
     with col_p2:
         st.markdown("#### 🗑️ Dar de Baja a Colaborador")
