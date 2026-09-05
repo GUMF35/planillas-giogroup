@@ -53,7 +53,8 @@ for emp, info in st.session_state["empleados"].items():
     if f"desc_{emp}" not in st.session_state: st.session_state[f"desc_{emp}"] = 0.0
     if f"email_{emp}" not in st.session_state: st.session_state[f"email_{emp}"] = ""
     if f"porc_{emp}" not in st.session_state: st.session_state[f"porc_{emp}"] = info["porc"]
-    if f"base_{emp}" not in st.session_state: st.session_state[f"base_{emp}"] = calcular_bruto_mensual(info["rol"]) * st.session_state["meses_multiplicador"]
+    if f"base_{emp}" not in st.session_state: 
+        st.session_state[f"base_{emp}"] = calcular_bruto_mensual(info["rol"]) * st.session_state["meses_multiplicador"]
 
 if "historial_auditoria" not in st.session_state: st.session_state["historial_auditoria"] = []
 if "ingresos_por_marca" not in st.session_state: st.session_state["ingresos_por_marca"] = {}
@@ -115,11 +116,11 @@ with st.sidebar:
         }
     )
 
-# --- 5. PANEL SUPERIOR: LECTOR DE PDF Y AUTODETECCIÓN DE FECHAS ---
+# --- 5. PANEL SUPERIOR: LECTOR DE PDF Y AUTODETECCIÓN DE FECHAS (MESES EXACTOS) ---
 if menu_seleccionado != "Configuración":
     with st.container():
         st.markdown("<h2 style='color:#0F172A; font-weight:800;'>Bienvenido, Administración 👋</h2>", unsafe_allow_html=True)
-        st.info(f"📅 **Período detectado:** {st.session_state['periodo_texto']} (Multiplicador de Planilla: {st.session_state['meses_multiplicador']} meses)")
+        st.info(f"📅 **Período detectado en PDF:** {st.session_state['periodo_texto']} | **Factor Multiplicador de Meses:** {st.session_state['meses_multiplicador']}x")
         
         archivo_subido = st.file_uploader("📥 Sincronizar reporte de ventas (PDF)", type=["pdf"])
 
@@ -133,24 +134,29 @@ if menu_seleccionado != "Configuración":
                         tabla = page.extract_table()
                         if tabla: todas_las_filas.extend(tabla)
                 
-                # 1. INTELIGENCIA DE FECHAS EXACTAS (Cálculo de N meses)
-                fechas = re.findall(r'\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b', texto_completo)
-                if fechas:
+                # 1. AUTODETECCIÓN DE FECHAS DEL PDF (Ej: Desde: 2026-05-01 | Hasta: 2026-08-31)
+                fechas_iso = re.findall(r'\b20\d{2}-\d{2}-\d{2}\b', texto_completo)
+                if len(fechas_iso) >= 2:
+                    min_fecha = datetime.strptime(fechas_iso[0], '%Y-%m-%d')
+                    max_fecha = datetime.strptime(fechas_iso[1], '%Y-%m-%d')
+                else:
+                    fechas_alt = re.findall(r'\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b', texto_completo)
                     fechas_dt = []
-                    for f in fechas:
+                    for f in fechas_alt:
                         try: fechas_dt.append(datetime.strptime(f.replace('-','/'), '%d/%m/%Y'))
                         except: pass
-                    
-                    if fechas_dt:
-                        min_fecha = min(fechas_dt)
-                        max_fecha = max(fechas_dt)
-                        meses_diff = (max_fecha.year - min_fecha.year) * 12 + (max_fecha.month - min_fecha.month) + 1
-                        meses_diff = float(max(1, meses_diff))
-                        
-                        st.session_state["meses_multiplicador"] = meses_diff
-                        st.session_state["periodo_texto"] = f"Del {min_fecha.strftime('%d/%m/%Y')} al {max_fecha.strftime('%d/%m/%Y')} ({int(meses_diff)} meses)"
+                    min_fecha = min(fechas_dt) if fechas_dt else datetime.now()
+                    max_fecha = max(fechas_dt) if fechas_dt else datetime.now()
 
-                # 2. PROCESAMIENTO DE TABLA
+                # Calcular número exacto de meses entre las fechas del PDF
+                meses_diff = (max_fecha.year - min_fecha.year) * 12 + (max_fecha.month - min_fecha.month)
+                if max_fecha.day >= 15: meses_diff += 1
+                meses_diff = float(max(1, meses_diff))
+
+                st.session_state["meses_multiplicador"] = meses_diff
+                st.session_state["periodo_texto"] = f"Del {min_fecha.strftime('%d/%m/%Y')} al {max_fecha.strftime('%d/%m/%Y')} ({int(meses_diff)} meses)"
+
+                # 2. PROCESAMIENTO DE TABLA DE INGRESOS
                 header_idx = -1
                 for i, row in enumerate(todas_las_filas):
                     if row and any(isinstance(cell, str) and 'PROFESIONAL' in cell.upper() for cell in row):
@@ -184,8 +190,9 @@ if menu_seleccionado != "Configuración":
                         df_reporte['EXTRA_BRUTO'] = df_reporte.apply(calcular_extra_marca, axis=1)
                         st.session_state["extras_por_marca"] = df_reporte.groupby('MARCA')['EXTRA_BRUTO'].sum().to_dict()
                         
-                        # 3. ACTUALIZAR SUELDOS Y COMISIONES (Congelados para no perderse a $0.00)
+                        # 3. ACTUALIZAR SUELDOS MULTIPLICADOS Y COMISIONES TOTALES DEL PERÍODO
                         for emp, info in st.session_state["empleados"].items():
+                            # Sueldo base bruto multiplicado por la cantidad de meses del reporte
                             st.session_state[f"base_{emp}"] = calcular_bruto_mensual(info["rol"]) * st.session_state["meses_multiplicador"]
 
                             df_p = df_reporte[df_reporte[col_prof].astype(str).str.contains(info["alias"], case=False, na=False, regex=True)]
@@ -205,7 +212,7 @@ if menu_seleccionado != "Configuración":
                             else:
                                 st.session_state[f"com_{emp}"] = 0.0
 
-                        st.success(f"✅ ¡PDF analizado exitosamente! Todos los montos se han sumado y congelado correctamente.")
+                        st.success(f"✅ ¡PDF analizado! Se detectaron {int(st.session_state['meses_multiplicador'])} meses. Sueldos y comisiones sumadas para todo el período.")
             except Exception as e:
                 st.error(f"Error procesando PDF: {e}")
 
@@ -256,7 +263,6 @@ elif menu_seleccionado == "Planillas":
             c1, c2, c3 = st.columns([1.2, 1, 1])
 
             with c1:
-                # SEPARACIÓN DE DATOS (Evita que las comisiones se borren a 0.00)
                 val_base = st.number_input(f"Sueldo Base (Bruto) ($)", value=float(st.session_state[f"base_{emp}"]), key=f"ui_b_{emp}")
                 st.session_state[f"base_{emp}"] = val_base
                 
@@ -265,14 +271,14 @@ elif menu_seleccionado == "Planillas":
                     if "Porcentaje" in mod:
                         porc = st.slider(f"% Ganancia", 0, 100, st.session_state.get(f"porc_{emp}", info["porc"]), key=f"p_{emp}")
                         st.session_state[f"mod_{emp}"] = "Porcentaje Directo (%)"
-                        # Recalcular SOLO si el usuario cambia el slider manualmente
-                        if porc != st.session_state[f"porc_{emp}"]:
+                        if porc != st.session_state.get(f"porc_val_{emp}", info["porc"]):
                             st.session_state[f"com_{emp}"] = st.session_state[f"serv_tot_{emp}"] * (porc / 100.0)
                             st.session_state[f"porc_{emp}"] = porc
+                            st.session_state[f"porc_val_{emp}"] = porc
                     else:
                         st.session_state[f"mod_{emp}"] = "Estándar"
                 else:
-                    st.caption(f"Ingresos generados (Base Multiplicada): ${st.session_state[f'serv_tot_{emp}']:.2f}")
+                    st.caption(f"Ingresos generados en el periodo: ${st.session_state[f'serv_tot_{emp}']:.2f}")
 
                 val_com = st.number_input(f"Comisiones ($)", value=float(st.session_state[f"com_{emp}"]), key=f"ui_c_{emp}")
                 st.session_state[f"com_{emp}"] = val_com
@@ -289,7 +295,7 @@ elif menu_seleccionado == "Planillas":
                 e_em = st.text_input(f"Correo", value=st.session_state[f"email_{emp}"], key=f"ui_e_{emp}")
                 st.session_state[f"email_{emp}"] = e_em
 
-            # REGLA DE ORO: RENTA ÚNICA Y EXCLUSIVAMENTE SOBRE LA CASILLA "SUELDO BASE (BRUTO)"
+            # REGLA DE ORO: RENTA ÚNICA Y EXCLUSIVAMENTE SOBRE LA CASILLA "SUELDO BASE (BRUTO)" MULTIPLICADA
             renta_calculada = st.session_state[f"base_{emp}"] * 0.10
             t_net = st.session_state[f"base_{emp}"] + st.session_state[f"com_{emp}"] + st.session_state[f"hex_{emp}"] - renta_calculada - st.session_state[f"desc_{emp}"]
             
@@ -327,14 +333,13 @@ elif menu_seleccionado == "Planillas":
             pdf.cell(130, 8, ' Concepto', 1, 0, 'L', fill=True); pdf.cell(60, 8, ' Monto ($)', 1, 1, 'R', fill=True)
             pdf.set_font('helvetica', '', 10); pdf.set_text_color(50, 50, 50)
             
-            for d, v in [("Sueldo Base (Bruto)", e_dat['Sueldo Base (Bruto)']), ("Comisiones Puras", e_dat['Comisiones']), ("Bonos Extras", e_dat['Bonos'])]:
+            for d, v in [("Sueldo Base Acumulado (Bruto)", e_dat['Sueldo Base (Bruto)']), ("Comisiones Acumuladas", e_dat['Comisiones']), ("Bonos Extras", e_dat['Bonos'])]:
                 pdf.cell(130, 8, f"  {d}", 1, 0, 'L'); pdf.cell(60, 8, f"${v:.2f}", 1, 1, 'R')
             
             pdf.set_text_color(201, 42, 42)
             if e_dat['Descuentos'] > 0:
                 pdf.cell(130, 8, "  (-) Otros Descuentos", 1, 0, 'L'); pdf.cell(60, 8, f"-${e_dat['Descuentos']:.2f}", 1, 1, 'R')
             
-            # ACLARACIÓN EN EL PDF DE RENTA SÓLO SOBRE EL SUELDO BASE BRUTO
             pdf.cell(130, 8, "  (-) 10% Retención de Renta (Únicamente s/Base)", 1, 0, 'L'); pdf.cell(60, 8, f"-${e_dat['10% Renta']:.2f}", 1, 1, 'R')
             
             pdf.set_font('helvetica', 'B', 11); pdf.set_fill_color(243, 244, 246); pdf.set_text_color(10, 25, 47)
@@ -352,28 +357,26 @@ elif menu_seleccionado in ["Memorándums", "Amonestaciones", "Auditoría"]:
 elif menu_seleccionado == "Configuración":
     st.markdown("<h2 style='color:#0F172A;'>⚙️ Configuración del Sistema (Admin)</h2>", unsafe_allow_html=True)
     
-    st.markdown("### 💰 1. Sueldos Netos Deseados (El sistema calculará el bruto)")
-    st.info("Ingresa la cantidad LIMPIA que deseas que reciba la persona al mes. El sistema lo inflará al bruto para descontar el 10% de renta legalmente.")
+    st.markdown("### 💰 1. Sueldos Netos Deseados (Mensuales)")
     col_s1, col_s2 = st.columns(2)
     with col_s1:
         st.session_state["salario_operativo_neto"] = st.number_input("Sueldo Mensual NETO Operativo:", value=float(st.session_state["salario_operativo_neto"]), step=10.0)
     with col_s2:
-        st.session_state["salario_directivo_neto"] = st.number_input("Sueldo Mensual NETO Directivo (Ej: 300.00):", value=float(st.session_state["salario_directivo_neto"]), step=10.0)
+        st.session_state["salario_directivo_neto"] = st.number_input("Sueldo Mensual NETO Directivo:", value=float(st.session_state["salario_directivo_neto"]), step=10.0)
     
     st.markdown("---")
-    st.markdown("### 📅 2. Ajuste Manual de Fechas (Si el PDF falla)")
-    c_t1, c_t2, c_t3 = st.columns(3)
+    st.markdown("### 📅 2. Ajuste Manual de Período")
+    c_t1, c_t2 = st.columns(2)
     with c_t1: st.text_input("Periodo Detectado Actual:", value=st.session_state["periodo_texto"], disabled=True)
     with c_t2: 
         meses_manual = st.number_input("Multiplicador Manual (Meses):", value=float(st.session_state["meses_multiplicador"]), step=1.0)
         if st.button("Aplicar Multiplicador Manual"):
             st.session_state["meses_multiplicador"] = float(meses_manual)
-            # Recalcular salarios base forzosamente
             for emp, info in st.session_state["empleados"].items():
                 st.session_state[f"base_{emp}"] = calcular_bruto_mensual(info["rol"]) * st.session_state["meses_multiplicador"]
-            st.success("Multiplicador actualizado correctamente a las planillas.")
+            st.success("Multiplicador manual aplicado.")
             st.rerun()
-            
+
     st.markdown("---")
     st.markdown("### 👥 3. Gestión de Personal (Altas y Bajas)")
     col_p1, col_p2 = st.columns([1, 1])
