@@ -15,10 +15,6 @@ import base64
 st.set_page_config(page_title="Gio Group - Admin", page_icon="🏢", layout="wide")
 
 logo_path = os.path.join(os.path.dirname(__file__), "logo.png")
-if os.path.exists(logo_path):
-    st.sidebar.image(logo_path, use_container_width=True)
-else:
-    st.sidebar.markdown("### 🏢 GIO GROUP SAS DE CV")
 
 # --- OCULTAR ELEMENTOS DE STREAMLIT ---
 esconder_menu = """
@@ -43,8 +39,19 @@ div.stButton > button:first-child:hover {
 """
 st.markdown(esconder_menu, unsafe_allow_html=True)
 
-st.title("📊 Panel Gerencial y Administrativo")
-st.markdown("*Sistema integral de recursos humanos, planillas y métricas financieras de rendimiento.*")
+# --- CABECERA CON LOGO ---
+col_logo, col_title = st.columns([1, 4])
+with col_logo:
+    if os.path.exists(logo_path):
+        st.image(logo_path, use_container_width=True)
+with col_title:
+    st.title("📊 Panel Gerencial y Administrativo")
+    st.markdown("*Sistema integral de recursos humanos, planillas y métricas financieras de rendimiento.*")
+
+if os.path.exists(logo_path):
+    st.sidebar.image(logo_path, use_container_width=True)
+else:
+    st.sidebar.markdown("### 🏢 GIO GROUP SAS DE CV")
 
 # --- CONFIGURACIÓN BASE ---
 st.sidebar.header("⚙️ Configuración Base")
@@ -60,6 +67,17 @@ empleados_lista = [
     "Edwin Ponce", 
     "Mario de Paz"
 ]
+
+# Mapa de búsqueda inteligente para que la app sepa cómo encontrarlos en el PDF
+mapa_busqueda_pdf = {
+    "Maydely Hernández": "MAYDELY",
+    "Luis Violante": "LUIS",
+    "Jessica Lemus": "JESSICA",
+    "Dr. Gio Molina (Marvin Giovanni Molina Flores)": "GIO|MARVIN|DOCTOR",
+    "Gerson Ulises Molina Flores": "GERSON",
+    "Edwin Ponce": "EDWIN",
+    "Mario de Paz": "MARIO"
+}
 
 # Inicializar memoria de sesión
 for emp in empleados_lista:
@@ -78,7 +96,6 @@ st.subheader("📂 Reporte Global de Ingresos (PDF)")
 archivo_subido = st.file_uploader("Sube el archivo PDF de ingresos para alimentar el Dashboard y las Planillas:", type=["pdf"])
 
 df_reporte = None
-servicios_por_profesional = {}
 total_ingresos_pdf = 0.0
 
 if archivo_subido is not None:
@@ -109,11 +126,9 @@ if archivo_subido is not None:
 
                 total_ingresos_pdf = df_reporte[col_precio].sum()
 
-                # Extraer automáticamente a TODOS los profesionales únicos que aparecen en el PDF
-                nombres_en_pdf = df_reporte[col_prof].dropna().unique()
-
-                def procesar_empleado(nombre_corto):
-                    df_p = df_reporte[df_reporte[col_prof].astype(str).str.contains(nombre_corto, case=False, na=False)]
+                # Función genérica que suma a TODOS sin dejar a nadie fuera
+                def procesar_empleado(clave_busqueda):
+                    df_p = df_reporte[df_reporte[col_prof].astype(str).str.contains(clave_busqueda, case=False, na=False, regex=True)]
                     tot_servicios = df_p[col_precio].sum()
                     
                     df_extras = df_p[df_p[col_precio] >= 60].copy()
@@ -124,36 +139,21 @@ if archivo_subido is not None:
                     
                     return neto_estandar, desc_pub, tot_servicios
 
-                # Mapear totales de servicios para cada empleado de la lista
-                for emp in empleados_lista:
-                    # Buscar la coincidencia clave (ej. Maydely, Luis, Jessica, Gio, Gerson, etc.)
-                    clave_busqueda = "GIO" if "Gio" in emp else ("GERSON" if "Gerson" in emp else emp.split()[0])
+                # Escaneo dinámico para asignar sumas a cada integrante
+                for emp, clave in mapa_busqueda_pdf.items():
+                    estandar_val, desc_pub_val, tot_servicios_val = procesar_empleado(clave)
                     
-                    df_p = df_reporte[df_reporte[col_prof].astype(str).str.contains(clave_busqueda, case=False, na=False)]
-                    tot_serv = df_p[col_precio].sum()
-                    st.session_state[f"serv_tot_{emp}"] = tot_serv
-                    servicios_por_profesional[emp] = tot_serv
+                    st.session_state[f"serv_tot_{emp}"] = tot_servicios_val
+                    
+                    # Verificamos la modalidad que tienen en el selectbox
+                    mod = st.session_state.get(f"mod_{emp}", "Estándar")
+                    if "Estándar" in mod:
+                        st.session_state[f"com_{emp}"] = estandar_val
+                    else:
+                        porcentaje_actual = st.session_state.get(f"porc_{emp}", 20)
+                        st.session_state[f"com_{emp}"] = tot_servicios_val * (porcentaje_actual / 100.0)
 
-                # Cálculos específicos para modalidades de masajistas
-                m_est, m_pub, m_tot = procesar_empleado("MAYDELY")
-                if st.session_state.get("mod_Maydely Hernández", "Estándar") == "Estándar":
-                    st.session_state["com_Maydely Hernández"] = m_est
-                else:
-                    st.session_state["com_Maydely Hernández"] = m_tot * 0.20
-
-                l_est, l_pub, l_tot = procesar_empleado("LUIS")
-                if st.session_state.get("mod_Luis Violante", "Estándar") == "Estándar":
-                    st.session_state["com_Luis Violante"] = l_est
-                else:
-                    st.session_state["com_Luis Violante"] = l_tot * 0.20
-
-                j_est, j_pub, j_tot = procesar_empleado("JESSICA")
-                if st.session_state.get("mod_Jessica Lemus", "Estándar") == "Estándar":
-                    st.session_state["com_Jessica Lemus"] = j_est
-                else:
-                    st.session_state["com_Jessica Lemus"] = j_tot * 0.20
-
-                st.success("✅ ¡Reporte global PDF procesado! Se incluyeron todos los profesionales (Doctor y equipo).")
+                st.success("✅ ¡Reporte global PDF procesado! Sumatorias asignadas correctamente a todo el equipo, incluyendo al Dr. Gio Molina.")
     except Exception as e:
         st.warning(f"Advertencia al leer PDF: {e}")
 
@@ -178,7 +178,6 @@ with tab_metas:
     meta_minima = st.number_input("Meta de Servicios Requerida ($):", value=300.0, step=50.0)
 
     if archivo_subido is not None and df_reporte is not None:
-        # Calcular empleado estrella general (incluyendo al Dr. Gio y todos)
         mejor_empleado = ""
         mayor_venta = 0.0
         datos_grafica = {}
@@ -201,7 +200,6 @@ with tab_metas:
                 "Estado": cumplio
             })
 
-        # Nota: Calculamos provisionalmente el total de planillas para la utilidad neta
         costo_planilla_estimado = sum([
             (base_fijos if "Gio" in emp or "Gerson" in emp or "Edwin" in emp else base_masajistas) + 
             st.session_state.get(f"com_{emp}", 0.0) 
@@ -209,10 +207,9 @@ with tab_metas:
         ])
         utilidad_neta_clinica = total_ingresos_pdf - costo_planilla_estimado
 
-        # Mostrar KPIs Financieros y Operativos Superiores
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("💰 Ingresos Brutos (PDF)", f"${total_ingresos_pdf:,.2f}")
-        col2.metric("🏥 Utilidad Neta Clínica", f"${utilidad_neta_clinica:,.2f}", help="Ingresos brutos menos pago total de sueldos y comisiones de planillas")
+        col2.metric("🏥 Utilidad Neta Clínica", f"${utilidad_neta_clinica:,.2f}", help="Ingresos brutos menos pago total de sueldos y comisiones")
         col3.metric("⭐ Empleado Estrella", f"{mejor_empleado}", f"${mayor_venta:,.2f}")
         col4.metric("🎯 Meta Actual", f"${meta_minima:,.2f}")
 
@@ -286,36 +283,27 @@ with tab_planillas:
             with col1:
                 sueldo_base = st.number_input(f"Sueldo Base ($) [{emp}]", value=float(base_sugerido), key=f"base_{emp}")
                 
-                if emp in ["Maydely Hernández", "Luis Violante", "Jessica Lemus"]:
-                    modalidad = st.selectbox(f"Modalidad [{emp}]", ["Estándar (Sueldo + Comisiones con 25% Pub)", "Porcentaje Directo (%)"], key=f"mod_{emp}")
-                    tot_serv = st.session_state.get(f"serv_tot_{emp}", 0.0)
-                    
-                    if "Estándar" in modalidad:
-                        modalidad_str = "Estándar"
-                        if df_reporte is not None and 'col_prof' in locals() and 'col_precio' in locals():
-                            nombre_corto = emp.split()[0]
-                            df_p = df_reporte[df_reporte[col_prof].astype(str).str.contains(nombre_corto, case=False, na=False)]
-                            df_ex = df_p[df_p[col_precio] >= 60].copy()
-                            ext_val = (df_ex[col_precio] - 60).sum()
-                            d_pub = ext_val * 0.25
-                            st.session_state[f"com_{emp}"] = max(0.0, ext_val - d_pub)
-                            desc_pub_actual = d_pub
-                    else:
-                        modalidad_str = "Porcentaje Directo"
-                        porc_personalizado = st.slider(f"Porcentaje (%) [{emp}]", 0, 100, 20, key=f"porc_{emp}")
-                        st.session_state[f"com_{emp}"] = tot_serv * (porc_personalizado / 100.0)
+                modalidad = st.selectbox(f"Modalidad [{emp}]", ["Estándar (Sueldo + Comisiones con 25% Pub)", "Porcentaje Directo (%)"], key=f"mod_{emp}")
+                tot_serv = st.session_state.get(f"serv_tot_{emp}", 0.0)
+                
+                if "Estándar" in modalidad:
+                    modalidad_str = "Estándar"
+                    if df_reporte is not None and 'col_prof' in locals() and 'col_precio' in locals():
+                        clave = mapa_busqueda_pdf.get(emp, emp.split()[0])
+                        df_p = df_reporte[df_reporte[col_prof].astype(str).str.contains(clave, case=False, na=False, regex=True)]
+                        df_ex = df_p[df_p[col_precio] >= 60].copy()
+                        ext_val = (df_ex[col_precio] - 60).sum()
+                        d_pub = ext_val * 0.25
+                        st.session_state[f"com_{emp}"] = max(0.0, ext_val - d_pub)
+                        desc_pub_actual = d_pub
                 else:
-                    modalidad_str = "Administrativo/Fijo"
-                    # Para el Dr. Gio u otros, la comisión puede ser leída del PDF o ajustada manualmente
-                    tot_serv_doc = st.session_state.get(f"serv_tot_{emp}", 0.0)
-                    if tot_serv_doc > 0 and "Gio" in emp:
-                        # Si es el doctor, opcionalmente puede llevar un porcentaje o comisión directa de sus servicios
-                        pass
+                    modalidad_str = "Porcentaje Directo"
+                    porc_personalizado = st.slider(f"Porcentaje (%) [{emp}]", 0, 100, 20, key=f"porc_{emp}")
+                    st.session_state[f"com_{emp}"] = tot_serv * (porc_personalizado / 100.0)
 
                 comision_extra = st.number_input(f"Comisión Real Generada ($) [{emp}]", key=f"com_{emp}", step=5.0)
 
             with col2:
-                # Bonos / Nivelación exacta para llegar a la meta del empleado sin alterar su comisión real
                 horas_extras = st.number_input(f"Bonos / Nivelación / Extras ($) [{emp}]", value=0.0, key=f"hex_{emp}", step=5.0)
                 descuentos_extras = st.number_input(f"Descuentos ($) [{emp}]", value=0.0, key=f"desc_{emp}", step=5.0)
             
@@ -353,14 +341,23 @@ with tab_planillas:
     if st.button("👁️ Generar Vista Previa del Recibo PDF"):
         class PDFPlanilla(FPDF):
             def header(self):
+                if os.path.exists(logo_path):
+                    self.image(logo_path, 10, 8, 25)
+                    self.set_x(40)
                 self.set_font('helvetica', 'B', 16)
                 self.set_text_color(0, 86, 179)
                 self.cell(0, 10, 'GIO GROUP SAS DE CV', 0, 1, 'L')
+                
+                if os.path.exists(logo_path):
+                    self.set_x(40)
                 self.set_font('helvetica', '', 10)
                 self.set_text_color(100, 100, 100)
                 self.cell(0, 5, f'Comprobante Oficial de Pago - Modalidad: {emp_data["Modalidad"]}', 0, 1, 'L')
+                
+                if os.path.exists(logo_path):
+                    self.set_x(40)
                 self.cell(0, 5, f"Fecha: {datetime.now().strftime('%d/%m/%Y')}", 0, 1, 'L')
-                self.ln(5)
+                self.ln(10)
 
         pdf_p = PDFPlanilla()
         pdf_p.add_page()
@@ -449,11 +446,20 @@ with tab_memos:
         if texto_memo:
             class PDFMemo(FPDF):
                 def header(self):
+                    if os.path.exists(logo_path):
+                        self.image(logo_path, 10, 8, 25)
+                        self.set_x(40)
                     self.set_font('helvetica', 'B', 16)
+                    self.set_text_color(0, 86, 179)
                     self.cell(0, 10, 'GIO GROUP SAS DE CV', 0, 1, 'L')
+                    
+                    if os.path.exists(logo_path):
+                        self.set_x(40)
                     self.set_font('helvetica', '', 10)
+                    self.set_text_color(100, 100, 100)
                     self.cell(0, 5, 'MEMORANDUM OFICIAL', 0, 1, 'L')
-                    self.ln(5)
+                    self.ln(10)
+
             pdf_m = PDFMemo()
             pdf_m.add_page()
             pdf_m.set_font('helvetica', 'B', 11)
@@ -509,12 +515,20 @@ with tab_amonestaciones:
         if motivo_amon:
             class PDFAmon(FPDF):
                 def header(self):
+                    if os.path.exists(logo_path):
+                        self.image(logo_path, 10, 8, 25)
+                        self.set_x(40)
                     self.set_font('helvetica', 'B', 16)
                     self.set_text_color(201, 42, 42)
                     self.cell(0, 10, 'GIO GROUP SAS DE CV', 0, 1, 'L')
+                    
+                    if os.path.exists(logo_path):
+                        self.set_x(40)
                     self.set_font('helvetica', '', 10)
+                    self.set_text_color(100, 100, 100)
                     self.cell(0, 5, 'ACTA OFICIAL DE AMONESTACION', 0, 1, 'L')
-                    self.ln(5)
+                    self.ln(10)
+
             pdf_a = PDFAmon()
             pdf_a.add_page()
             pdf_a.set_font('helvetica', 'B', 11)
