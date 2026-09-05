@@ -18,6 +18,20 @@ footer {visibility: hidden;}
 """
 st.markdown(esconder_menu, unsafe_allow_html=True)
 
+# --- OCULTAR ELEMENTOS DE STREAMLIT ---
+esconder_menu = """
+<style>
+#MainMenu {visibility: hidden;}
+header {visibility: hidden;}
+footer {visibility: hidden;}
+.stDeployButton {display:none;}
+div[data-testid="stStatusWidget"] {visibility: hidden;}
+.viewerBadge_container {visibility: hidden !important;}
+iframe[title="streamlit/streamlit"] {display:none !important;}
+</style>
+"""
+st.markdown(esconder_menu, unsafe_allow_html=True)
+
 # --- 1. CONFIGURACIÓN ---
 st.sidebar.header("⚙️ Configuración de Personal")
 periodo = st.sidebar.radio("Selecciona el periodo:", ("Quincenal", "Mensual"))
