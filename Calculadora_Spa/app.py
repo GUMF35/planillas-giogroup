@@ -119,13 +119,33 @@ with st.sidebar:
         }
     )
 
-# --- 5. PANEL SUPERIOR: LECTOR DE PDF Y AUTODETECCIÓN DE FECHAS ---
+# --- 5. PANEL SUPERIOR: LECTOR DE PDF, AUTODETECCIÓN Y DEPURADOR DE CACHÉ ---
 if menu_seleccionado != "Configuración":
     with st.container():
         st.markdown("<h2 style='color:#0F172A; font-weight:800;'>Bienvenido, Administración 👋</h2>", unsafe_allow_html=True)
         st.info(f"📅 **Período detectado en PDF:** {st.session_state['periodo_texto']} | **Factor Multiplicador de Meses:** {st.session_state['meses_multiplicador']}x")
         
-        archivo_subido = st.file_uploader("📥 Sincronizar reporte de ventas (PDF)", type=["pdf"])
+        col_up1, col_up2 = st.columns([3, 1])
+        with col_up1:
+            archivo_subido = st.file_uploader("📥 Sincronizar reporte de ventas (PDF)", type=["pdf"])
+        with col_up2:
+            st.markdown("<br>", unsafe_allow_html=True)
+            # BOTÓN DEPURADOR / LIMPIADOR DE ARCHIVO Y CACHÉ
+            if st.button("🗑️ Limpiar / Reiniciar Datos"):
+                st.session_state["total_ingresos_pdf"] = 0.0
+                st.session_state["ingresos_por_marca"] = {}
+                st.session_state["extras_por_marca"] = {}
+                st.session_state["total_fondo_publicidad"] = 0.0
+                st.session_state["meses_multiplicador"] = 1.0
+                st.session_state["periodo_texto"] = "1 Mes (Por defecto)"
+                for emp, info in st.session_state["empleados"].items():
+                    st.session_state[f"com_{emp}"] = 0.0
+                    st.session_state[f"extra_bruto_{emp}"] = 0.0
+                    st.session_state[f"ret_pub_{emp}"] = 0.0
+                    st.session_state[f"serv_tot_{emp}"] = 0.0
+                    st.session_state[f"base_{emp}"] = calcular_bruto_mensual(info["rol"])
+                st.success("¡Datos y caché depurados correctamente. Listo para nuevo archivo!")
+                st.rerun()
 
         if archivo_subido is not None:
             try:
@@ -333,12 +353,12 @@ elif menu_seleccionado == "Planillas":
         st.dataframe(df_res.style.format({
             "Sueldo Base (Bruto)": "${:.2f}", 
             "Extra Bruto": "${:,.2f}",
-            "Retención Pub (25%)": "${:.2f}",
-            "Comisiones Netas": "${:.2f}", 
-            "Bonos": "${:.2f}", 
-            "Descuentos": "${:.2f}", 
-            "10% Renta": "${:.2f}", 
-            "Total a Pagar": "${:.2f}"
+            "Retención Pub (25%)": "${:,.2f}",
+            "Comisiones Netas": "${:,.2f}", 
+            "Bonos": "${:,.2f}", 
+            "Descuentos": "${:,.2f}", 
+            "10% Renta": "${:,.2f}", 
+            "Total a Pagar": "${:,.2f}"
         }), use_container_width=True, hide_index=True)
 
         out_ex = io.BytesIO()
