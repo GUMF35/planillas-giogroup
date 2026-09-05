@@ -4,3 +4,6 @@ openpyxl
 pdfplumber
 fpdf2
 streamlit-option-menu
+openpyxl
+PIL
+fpdf
