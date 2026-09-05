@@ -245,6 +245,3 @@ Gio Group SAS de CV"""
 
         except Exception as ex:
             st.error(f"Error al generar o enviar el recibo: {ex}")
-
-    except Exception as e:
-        st.error(f"Error procesando archivo: {e}")
