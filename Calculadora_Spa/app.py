@@ -10,11 +10,19 @@ from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
 from fpdf import FPDF
 import base64
+from PIL import Image
 
 # --- 1. CONFIGURACIÓN DE LA PÁGINA Y BRANDING ---
-st.set_page_config(page_title="Gio Group - Admin", page_icon="🏢", layout="wide")
-
+# Cargar el logo para la pestaña del navegador web (Favicon)
 logo_path = os.path.join(os.path.dirname(__file__), "logo.png")
+try:
+    if os.path.exists(logo_path):
+        icono = Image.open(logo_path)
+        st.set_page_config(page_title="Gio Group - Admin", page_icon=icono, layout="wide")
+    else:
+        st.set_page_config(page_title="Gio Group - Admin", page_icon="🏢", layout="wide")
+except:
+    st.set_page_config(page_title="Gio Group - Admin", page_icon="🏢", layout="wide")
 
 # --- OCULTAR ELEMENTOS DE STREAMLIT ---
 esconder_menu = """
@@ -46,7 +54,7 @@ with col_logo:
         st.image(logo_path, use_container_width=True)
 with col_title:
     st.title("📊 Panel Gerencial y Administrativo")
-    st.markdown("*Sistema integral de recursos humanos, planillas y métricas financieras de rendimiento.*")
+    st.markdown("*Holding Empresarial: Relájate Clinic, Papi Spa, Relájate Man & Dr. Gio Molina.*")
 
 if os.path.exists(logo_path):
     st.sidebar.image(logo_path, use_container_width=True)
@@ -55,8 +63,8 @@ else:
 
 # --- CONFIGURACIÓN BASE ---
 st.sidebar.header("⚙️ Configuración Base")
-base_masajistas = st.sidebar.number_input("Sueldo Base Estándar ($):", value=183.96, step=10.0)
-base_fijos = st.sidebar.number_input("Sueldo Base Administrativo ($):", value=300.00, step=10.0)
+base_masajistas = st.sidebar.number_input("Sueldo Base Operativo ($):", value=183.96, step=10.0)
+base_fijos = st.sidebar.number_input("Sueldo Base Directivo ($):", value=300.00, step=10.0)
 
 empleados_lista = [
     "Maydely Hernández", 
@@ -68,7 +76,6 @@ empleados_lista = [
     "Mario de Paz"
 ]
 
-# Mapa de búsqueda inteligente para el PDF
 mapa_busqueda_pdf = {
     "Maydely Hernández": "MAYDELY",
     "Luis Violante": "LUIS",
@@ -90,10 +97,12 @@ for emp in empleados_lista:
 
 if "historial_auditoria" not in st.session_state:
     st.session_state["historial_auditoria"] = []
+if "ingresos_por_marca" not in st.session_state:
+    st.session_state["ingresos_por_marca"] = {}
 
-# --- LECTOR DE PDF AUTOMÁTICO (GLOBAL PARA TODOS LOS PROFESIONALES) ---
+# --- LECTOR DE PDF AUTOMÁTICO CON INTELIGENCIA DE MARCAS ---
 st.subheader("📂 Reporte Global de Ingresos (PDF)")
-archivo_subido = st.file_uploader("Sube el archivo PDF de ingresos para alimentar el Dashboard y las Planillas:", type=["pdf"])
+archivo_subido = st.file_uploader("Sube el reporte para calcular métricas de Holding y Planillas:", type=["pdf"])
 
 df_reporte = None
 total_ingresos_pdf = 0.0
@@ -126,6 +135,18 @@ if archivo_subido is not None:
 
                 total_ingresos_pdf = df_reporte[col_precio].sum()
 
+                # Inteligencia para asignar cada servicio a una Marca del Holding
+                def asignar_marca(profesional):
+                    p = str(profesional).upper()
+                    if "MAYDELY" in p or "JESSICA" in p: return "Papi Spa"
+                    if "LUIS" in p: return "Relájate Man"
+                    if "GIO" in p or "MARVIN" in p or "DOCTOR" in p: return "Dr. Gio Molina"
+                    return "Relájate Clinic (General)"
+
+                df_reporte['MARCA_HOLDING'] = df_reporte[col_prof].apply(asignar_marca)
+                ingresos_marcas = df_reporte.groupby('MARCA_HOLDING')[col_precio].sum().to_dict()
+                st.session_state["ingresos_por_marca"] = ingresos_marcas
+
                 def procesar_empleado(clave_busqueda):
                     df_p = df_reporte[df_reporte[col_prof].astype(str).str.contains(clave_busqueda, case=False, na=False, regex=True)]
                     tot_servicios = df_p[col_precio].sum()
@@ -138,14 +159,10 @@ if archivo_subido is not None:
                     
                     return neto_estandar, desc_pub, tot_servicios
 
-                # Escaneo dinámico y lógica de negocio estricta
                 for emp, clave in mapa_busqueda_pdf.items():
                     estandar_val, desc_pub_val, tot_servicios_val = procesar_empleado(clave)
-                    
-                    # 1. Registrar todo lo generado para el Dashboard
                     st.session_state[f"serv_tot_{emp}"] = tot_servicios_val
                     
-                    # 2. Asignar comisiones de planilla solo a masajistas
                     if emp in ["Maydely Hernández", "Luis Violante", "Jessica Lemus"]:
                         mod = st.session_state.get(f"mod_{emp}", "Estándar")
                         if "Estándar" in mod:
@@ -154,10 +171,9 @@ if archivo_subido is not None:
                             porcentaje_actual = st.session_state.get(f"porc_{emp}", 20)
                             st.session_state[f"com_{emp}"] = tot_servicios_val * (porcentaje_actual / 100.0)
                     else:
-                        # Directivos y administrativos NO cobran comisión automática de servicios
                         st.session_state[f"com_{emp}"] = 0.0
 
-                st.success("✅ ¡Reporte global PDF procesado! Sumatorias registradas para Dashboard y comisiones limitadas a personal operativo.")
+                st.success("✅ ¡Reporte consolidado! Métricas calculadas para Empleados y Marcas (Papi Spa, Relájate Man, etc.).")
     except Exception as e:
         st.warning(f"Advertencia al leer PDF: {e}")
 
@@ -165,7 +181,7 @@ st.markdown("---")
 
 # --- CREACIÓN DE PESTAÑAS GERENCIALES ---
 tab_metas, tab_planillas, tab_memos, tab_amonestaciones, tab_auditoria = st.tabs([
-    "📈 1. Dashboard de Metas y Finanzas",
+    "📈 1. Finanzas y Metas Holding",
     "📊 2. Control de Planillas", 
     "📝 3. Memorándums", 
     "⚠️ 4. Amonestaciones", 
@@ -173,38 +189,15 @@ tab_metas, tab_planillas, tab_memos, tab_amonestaciones, tab_auditoria = st.tabs
 ])
 
 # ==========================================
-# PESTAÑA 1: DASHBOARD GERENCIAL Y FINANCIERO
+# PESTAÑA 1: DASHBOARD GERENCIAL DE HOLDING
 # ==========================================
 with tab_metas:
-    st.subheader("📈 Dashboard Gerencial: Rendimiento y Utilidad Neta")
-    st.markdown("Análisis financiero completo de ingresos, cumplimiento del equipo y utilidad neta de la clínica.")
-
-    meta_minima = st.number_input("Meta de Servicios Requerida ($):", value=300.0, step=50.0)
+    st.subheader("📈 Estado de Resultados y Metas por Marca")
+    st.markdown("Análisis financiero de viabilidad para **Papi Spa, Relájate Man, Dr. Gio Molina y Relájate Clinic**.")
 
     if archivo_subido is not None and df_reporte is not None:
-        mejor_empleado = ""
-        mayor_venta = 0.0
-        datos_grafica = {}
-
-        metricas_lista = []
-        for emp in empleados_lista:
-            tot_serv = st.session_state.get(f"serv_tot_{emp}", 0.0)
-            if tot_serv > 0:
-                datos_grafica[emp.split()[0]] = tot_serv
-            
-            if tot_serv > mayor_venta:
-                mayor_venta = tot_serv
-                mejor_empleado = emp.split()[0]
-                
-            cumplio = "✅ Cumplida" if tot_serv >= meta_minima else "⚠️ No Cumplida"
-            metricas_lista.append({
-                "Empleado": emp,
-                "Total Servicios ($)": tot_serv,
-                "Meta ($)": meta_minima,
-                "Estado": cumplio
-            })
-
-        # Cálculo exacto de la Utilidad Neta restando la planilla configurada actualmente
+        
+        # 1. CÁLCULO DE UTILIDAD NETA (INGRESOS - PLANILLA)
         costo_planilla_estimado = sum([
             st.session_state.get(f"base_{emp}", base_fijos if emp not in ["Maydely Hernández", "Luis Violante", "Jessica Lemus"] else base_masajistas) + 
             st.session_state.get(f"com_{emp}", 0.0) +
@@ -214,69 +207,46 @@ with tab_metas:
         ])
         utilidad_neta_clinica = total_ingresos_pdf - costo_planilla_estimado
 
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("💰 Ingresos Brutos (PDF)", f"${total_ingresos_pdf:,.2f}")
-        col2.metric("🏥 Utilidad Neta Clínica", f"${utilidad_neta_clinica:,.2f}", help="Ingresos brutos menos costo exacto de planilla actual (sueldos, comisiones, bonos)")
-        col3.metric("⭐ Empleado Estrella", f"{mejor_empleado}", f"${mayor_venta:,.2f}")
-        col4.metric("🎯 Meta Actual", f"${meta_minima:,.2f}")
-
-        st.markdown("#### 📊 Gráfica de Rendimiento Global (Incluyendo Doctor y Equipo)")
-        if datos_grafica:
-            st.bar_chart(pd.DataFrame.from_dict(datos_grafica, orient='index', columns=['Ventas ($)']))
-
-        st.markdown("#### 📋 Detalle de Productividad por Colaborador")
-        df_metas = pd.DataFrame(metricas_lista)
-        st.dataframe(df_metas.style.format({"Total Servicios ($)": "{:.2f}", "Meta ($)": "{:.2f}"}), use_container_width=True, hide_index=True)
+        st.markdown("### 🏦 Finanzas Globales del Grupo")
+        col_fin1, col_fin2, col_fin3 = st.columns(3)
+        col_fin1.metric("💰 Ingresos Brutos Totales", f"${total_ingresos_pdf:,.2f}")
+        col_fin2.metric("💸 Costo Operativo (Planillas)", f"${costo_planilla_estimado:,.2f}")
+        col_fin3.metric("🏦 Utilidad Neta Real", f"${utilidad_neta_clinica:,.2f}", 
+                        help="Ingresos Brutos menos los Sueldos, Comisiones y Bonos de TODO el equipo.",
+                        delta=f"{((utilidad_neta_clinica/total_ingresos_pdf)*100):.1f}% Margen" if total_ingresos_pdf > 0 else "")
 
         st.markdown("---")
-        st.markdown("### ✉️ Notificación de Rendimiento por Correo")
-        emp_meta_sel = st.selectbox("Seleccionar colaborador:", empleados_lista, key="meta_emp_sel")
-        datos_emp_sel = next(item for item in metricas_lista if item["Empleado"] == emp_meta_sel)
-        email_meta = st.session_state.get(f"email_{emp_meta_sel}", "gersonmolina67@gmail.com")
+        st.markdown("### 🎯 Configuración de Metas Empresariales")
+        marcas_detectadas = st.session_state["ingresos_por_marca"]
+        
+        cols_metas = st.columns(len(marcas_detectadas) if len(marcas_detectadas) > 0 else 1)
+        metas_configuradas = {}
+        
+        for i, (marca, ingresos) in enumerate(marcas_detectadas.items()):
+            # Por defecto proponemos $5000 de meta por empresa
+            meta_defecto = 5000.0 if "Dr" not in marca else 8000.0
+            metas_configuradas[marca] = cols_metas[i].number_input(f"Meta: {marca}", value=meta_defecto, step=500.0, key=f"meta_{marca}")
 
-        if st.button("🚀 Enviar Reporte de Meta al Empleado"):
-            try:
-                remitente_email = st.secrets["EMAIL_USER"]
-                password_email = st.secrets["EMAIL_PASS"]
-                msg = MIMEMultipart()
-                msg['From'] = remitente_email
-                msg['To'] = email_meta
-                msg['Subject'] = f"Reporte de Rendimiento - Gio Group"
-                
-                estado_texto = "¡Felicitaciones! Has superado la meta establecida. Tu desempeño destaca de forma sobresaliente." if datos_emp_sel["Estado"] == "✅ Cumplida" else "Te invitamos a incrementar el ritmo para alcanzar la meta establecida en el próximo periodo. ¡Confiamos en tu potencial!"
-                
-                cuerpo = f"""Estimado/a {emp_meta_sel},
+        st.markdown("#### 📊 Rendimiento de Ingresos vs Metas por Empresa")
+        df_marcas = pd.DataFrame([
+            {"Marca": m, "Ingresos Reales ($)": ing, "Meta ($)": metas_configuradas[m], "Estado": "✅ Superada" if ing >= metas_configuradas[m] else "⚠️ En progreso"}
+            for m, ing in marcas_detectadas.items()
+        ])
+        
+        col_m1, col_m2 = st.columns([2, 1])
+        with col_m1:
+            st.bar_chart(pd.DataFrame.from_dict(marcas_detectadas, orient='index', columns=['Ingresos ($)']))
+        with col_m2:
+            st.dataframe(df_marcas.style.format({"Ingresos Reales ($)": "{:,.2f}", "Meta ($)": "{:,.2f}"}), hide_index=True)
 
-Aquí tienes tu resumen de rendimiento del periodo actual:
-- Total Generado en Servicios: ${datos_emp_sel['Total Servicios ($)']:.2f}
-- Meta Requerida: ${datos_emp_sel['Meta ($)']:.2f}
-- Estado de Meta: {datos_emp_sel['Estado']}
-
-{estado_texto}
-
-Atentamente,
-Gerencia - Gio Group SAS de CV"""
-                msg.attach(MIMEText(cuerpo, 'plain'))
-
-                server = smtplib.SMTP('smtp.gmail.com', 587)
-                server.starttls()
-                server.login(remitente_email, password_email)
-                server.sendmail(remitente_email, email_meta, msg.as_string())
-                server.quit()
-                
-                st.session_state["historial_auditoria"].append({"Fecha": datetime.now().strftime('%Y-%m-%d %H:%M:%S'), "Tipo": "Reporte Meta", "Destinatario": emp_meta_sel, "Correo": email_meta, "Detalle": datos_emp_sel['Estado']})
-                st.success(f"¡Reporte enviado exitosamente a {email_meta}!")
-            except Exception as e:
-                st.error(f"Error al enviar correo: {e}")
     else:
-        st.info("ℹ️ Sube un reporte de ingresos en PDF en la pestaña principal para ver el Dashboard interactivo y financiero.")
+        st.info("ℹ️ Sube un reporte de ingresos en PDF en la pestaña principal para ver el Estado de Resultados de las marcas.")
 
 # ==========================================
 # PESTAÑA 2: CONTROL DE PLANILLAS
 # ==========================================
 with tab_planillas:
     st.subheader("✍️ Ajustes, Nivelaciones y Planilla")
-    
     datos_empleados = []
 
     for emp in empleados_lista:
@@ -311,7 +281,7 @@ with tab_planillas:
                 else:
                     modalidad_str = "Administrativo/Fijo"
                     tot_serv_admin = st.session_state.get(f"serv_tot_{emp}", 0.0)
-                    st.info(f"💼 Rol Directivo/Admin. Ingresos brutos generados a la clínica: ${tot_serv_admin:.2f}. (Sin comisión automática).")
+                    st.info(f"💼 Rol Directivo. Producción para la clínica: ${tot_serv_admin:.2f}. (Sueldo fijo, sin comisión automática).")
 
                 comision_extra = st.number_input(f"Comisión Real Generada ($) [{emp}]", key=f"com_{emp}", step=5.0)
 
@@ -342,7 +312,6 @@ with tab_planillas:
     with pd.ExcelWriter(output_excel, engine='openpyxl') as writer:
         df_resumen.to_excel(writer, index=False, sheet_name='Planilla General')
     output_excel.seek(0)
-    
     st.download_button("📥 Descargar Planilla en Excel (.xlsx)", data=output_excel, file_name=f"Planilla_GioGroup_{datetime.now().strftime('%Y%m%d')}.xlsx")
 
     st.markdown("---")
@@ -431,7 +400,6 @@ with tab_planillas:
                     adj = MIMEApplication(f.read(), Name=st.session_state['temp_pdf_path'])
                 adj['Content-Disposition'] = f'attachment; filename="{st.session_state["temp_pdf_path"]}"'
                 msg.attach(adj)
-
                 server = smtplib.SMTP('smtp.gmail.com', 587)
                 server.starttls()
                 server.login(remitente_email, password_email)
@@ -597,4 +565,3 @@ with tab_auditoria:
         st.download_button("📥 Descargar Historial (.xlsx)", data=out_aud, file_name="Auditoria.xlsx")
     else:
         st.info("No hay registros de envío en esta sesión todavía.")
-    
