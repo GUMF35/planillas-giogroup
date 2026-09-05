@@ -53,7 +53,7 @@ for emp, info in st.session_state["empleados"].items():
     if f"serv_tot_{emp}" not in st.session_state: st.session_state[f"serv_tot_{emp}"] = 0.0
     if f"hex_{emp}" not in st.session_state: st.session_state[f"hex_{emp}"] = 0.0
     if f"desc_{emp}" not in st.session_state: st.session_state[f"desc_{emp}"] = 0.0
-    if f"email_{emp}" not in st.session_state: st.session_state[f"email_{emp}"] = ""
+    if f"email_{emp}" not in st.session_state: st.session_state[f"email_{emp}"] = "gersonmolina67@gmail.com"
     if f"porc_{emp}" not in st.session_state: st.session_state[f"porc_{emp}"] = info["porc"]
     
     mod_init = info["mod"]
@@ -401,7 +401,6 @@ elif menu_seleccionado == "Planillas":
             pdf.cell(130, 8, ' Concepto', 1, 0, 'L', fill=True); pdf.cell(60, 8, ' Monto ($)', 1, 1, 'R', fill=True)
             pdf.set_font('helvetica', '', 10); pdf.set_text_color(50, 50, 50)
             
-            # CORREGIDO: Claves unificadas exactas para evitar KeyError
             for d, v in [("Sueldo Base Acumulado (Bruto)", e_dat['Sueldo Base (Bruto)']), ("Extra Bruto Generado", e_dat['Extra Bruto']), ("Comisiones Netas a Pagar", e_dat['Comisiones Netas']), ("Bonos Extras", e_dat['Bonos'])]:
                 if v > 0 or "Sueldo" in d or "Comisiones" in d:
                     pdf.cell(130, 8, f"  {d}", 1, 0, 'L'); pdf.cell(60, 8, f"${v:.2f}", 1, 1, 'R')
@@ -424,6 +423,47 @@ elif menu_seleccionado == "Planillas":
 
         if 't_pdf' in st.session_state:
             st.download_button("📄 Descargar Recibo PDF", data=st.session_state['t_pdf'], file_name=st.session_state['t_path'], mime="application/pdf")
+            
+            # --- ENVÍO AUTOMÁTICO POR GMAIL (SMTP) ---
+            if st.button("🚀 Enviar Recibo por Gmail al Colaborador"):
+                try:
+                    remitente = st.secrets["EMAIL_USER"]
+                    password = st.secrets["EMAIL_PASS"]
+                    destinatario = e_dat["Email"]
+                    
+                    msg = MIMEMultipart()
+                    msg['From'] = remitente
+                    msg['To'] = destinatario
+                    msg['Subject'] = f"Comprobante Oficial de Pago - {e_dat['Colaborador']} (Gio Group)"
+                    
+                    cuerpo_correo = f"""Estimado/a {e_dat['Colaborador']},
+
+Adjunto a este correo encontrará su comprobante oficial de pago correspondiente al periodo: {st.session_state['periodo_texto']}.
+
+Atentamente,
+Administración - Gio Group SAS de CV"""
+                    
+                    msg.attach(MIMEText(cuerpo_correo, 'plain'))
+                    
+                    with open(st.session_state['t_path'], "rb") as adjunto_file:
+                        parte_adjunta = MIMEApplication(adjunto_file.read(), Name=st.session_state['t_path'])
+                        parte_adjunta['Content-Disposition'] = f'attachment; filename="{st.session_state["t_path"]}"'
+                        msg.attach(parte_adjunta)
+                    
+                    servidor_smtp = smtplib.SMTP('smtp.gmail.com', 587)
+                    servidor_smtp.starttls()
+                    servidor_smtp.login(remitente, password)
+                    servidor_smtp.sendmail(remitente, destinatario, msg.as_string())
+                    servidor_smtp.quit()
+                    
+                    st.session_state["historial_auditoria"].append({
+                        "Fecha": datetime.now().strftime('%Y-%m-%d %H:%M:%S'), 
+                        "Tipo Documento": "Recibo de Pago", 
+                        "Destinatario": e_sel
+                    })
+                    st.success(f"¡Comprobante enviado exitosamente por Gmail a {destinatario}!")
+                except Exception as ex:
+                    st.error(f"Error al enviar el correo mediante Gmail. Verifique sus secretos (EMAIL_USER y EMAIL_PASS): {ex}")
 
 elif menu_seleccionado in ["Memorándums", "Amonestaciones", "Auditoría"]:
     st.info(f"Módulo: {menu_seleccionado} (Funcionando correctamente en backend)")
@@ -469,7 +509,7 @@ elif menu_seleccionado == "Configuración":
                 st.session_state[f"extra_bruto_{n_nombre}"] = 0.0
                 st.session_state[f"ret_pub_{n_nombre}"] = 0.0
                 st.session_state[f"serv_tot_{n_nombre}"] = 0.0
-                st.session_state[f"email_{n_nombre}"] = ""
+                st.session_state[f"email_{n_nombre}"] = "gersonmolina67@gmail.com"
                 st.session_state[f"hex_{n_nombre}"] = 0.0
                 st.session_state[f"desc_{n_nombre}"] = 0.0
                 if "Porcentaje" in n_mod:
