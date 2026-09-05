@@ -3,3 +3,4 @@ pandas
 openpyxl
 pdfplumber
 fpdf2
+streamlit-option-menu
