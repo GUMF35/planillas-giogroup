@@ -154,10 +154,9 @@ for emp in empleados_lista:
                 
                 if "Estándar" in modalidad:
                     modalidad_str = "Estándar"
-                    # Recalcular estándar si cambia el selector
                     df_aux = locals().get('df_reporte', None)
                     if df_aux is not None and 'col_prof' in locals() and 'col_precio' in locals():
-                        nombre_ corto = emp.split()[0]
+                        nombre_corto = emp.split()[0]
                         df_p = df_aux[df_aux[col_prof].astype(str).str.contains(nombre_corto, case=False, na=False)]
                         df_ex = df_p[df_p[col_precio] >= 60].copy()
                         ext_val = (df_ex[col_precio] - 60).sum()
@@ -173,7 +172,6 @@ for emp in empleados_lista:
             else:
                 modalidad_str = "Administrativo/Fijo"
 
-            # Campo controlado por session_state sin valor estático conflictivo
             comision_extra = st.number_input(
                 f"Comisiones / Servicios ($) [{emp}]", 
                 key=f"com_{emp}", 
