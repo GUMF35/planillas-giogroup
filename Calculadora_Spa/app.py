@@ -35,11 +35,6 @@ base_fijos = st.sidebar.number_input("Sueldo Base Administrativo/Docs ($):", val
 comision_jessica = st.sidebar.slider("Comisión Jessica (%):", min_value=0, max_value=100, value=20) / 100
 comision_mario = st.sidebar.number_input("Comisiones Extra Mario de Paz ($):", min_value=0.0, value=0.0, step=10.0)
 
-# Configuración de Correo Gmail (Se puede rellenar aquí o en barra lateral)
-st.sidebar.subheader("📧 Configuración de Envío Gmail")
-remitente_email = st.sidebar.text_input("Tu Correo de Gmail:", value="gersonmolina67@gmail.com")
-password_email = st.sidebar.text_input("Contraseña de Aplicación (16 letras):", type="password")
-
 # --- LECTOR DE PDF ---
 st.write("Sube el reporte de ingresos en formato **PDF**.")
 archivo_subido = st.file_uploader("Sube tu archivo aquí", type=["pdf", "xlsx", "csv"])
@@ -83,39 +78,57 @@ if archivo_subido is not None:
                     desc_pub = total_bruto * 0.25
                     neto = total_bruto - desc_pub
                     total = neto + base_masajistas
-                    return total_bruto, desc_pub, neto, total
+                    return total
 
-                may_bruto, may_desc, may_neto, may_total = calcular_extras("MAYDELY")
-                luis_bruto, luis_desc, luis_neto, luis_total = calcular_extras("LUIS")
+                may_total = calcular_extras("MAYDELY")
+                luis_total = calcular_extras("LUIS")
 
                 jessica_trabajado = df[df[col_prof].astype(str).str.contains("JESSICA", case=False, na=False)][col_precio].sum()
                 jessica_total = jessica_trabajado * comision_jessica
 
                 gio_total = base_fijos 
-                gerson_total, edwin_total = base_fijos, base_fijos
+                gerson_total = base_fijos
+                edwin_total = base_fijos
                 mario_total = base_masajistas + comision_mario
+
                 gran_total = may_total + luis_total + jessica_total + gio_total + gerson_total + edwin_total + mario_total
 
                 st.subheader("📋 Resumen de Pagos Calculados")
+                
+                lista_empleados = [
+                    "Maydely Hernández", 
+                    "Luis Violante", 
+                    "Jessica Lemus", 
+                    "Dr. Gio Molina (Marvin Giovanni Molina Flores)", 
+                    "Gerson Ulises Molina Flores", 
+                    "Edwin Ponce", 
+                    "Mario de Paz"
+                ]
+                
+                montos_empleados = [may_total, luis_total, jessica_total, gio_total, gerson_total, edwin_total, mario_total]
+
                 resumen_data = {
-                    "Empleado": ["Maydely Hernández", "Luis Violante", "Jessica Lemus", "Dr. Gio Molina", "Gerson Flores", "Edwin Ponce", "Mario de Paz"],
-                    "Total a Pagar ($)": [may_total, luis_total, jessica_total, gio_total, gerson_total, edwin_total, mario_total]
+                    "Empleado": lista_empleados,
+                    "Total a Pagar ($)": montos_empleados
                 }
                 st.dataframe(pd.DataFrame(resumen_data).style.format({"Total a Pagar ($)": "{:.2f}"}))
 
-                # --- APARTADO DE CORREOS ---
+                # --- APARTADO DE CORREOS AUTOMATIZADO ---
                 st.subheader("✉️ Enviar Comprobantes por Gmail")
-                col_nombre_envio = st.selectbox("Selecciona a quién enviar recibo:", ["Maydely Hernández", "Luis Violante", "Jessica Lemus"])
-                email_destino = st.text_input(f"Correo electrónico de {col_nombre_envio}:")
+                col_nombre_envio = st.selectbox("Selecciona a quién enviar recibo:", lista_empleados)
+                email_destino = st.text_input(f"Correo electrónico para {col_nombre_envio}:")
 
                 if st.button("Enviar Recibo por Correo"):
-                    if not password_email:
-                        st.error("⚠️ Debes ingresar tu contraseña de aplicación de Gmail en la barra lateral.")
-                    elif not email_destino:
+                    if not email_destino:
                         st.error("⚠️ Ingresa un correo electrónico de destino válido.")
                     else:
                         try:
-                            # Estructura del correo
+                            remitente_email = st.secrets["EMAIL_USER"]
+                            password_email = st.secrets["EMAIL_PASS"]
+
+                            idx_seleccionado = lista_empleados.index(col_nombre_envio)
+                            monto_neto = montos_empleados[idx_seleccionado]
+
                             msg = MIMEMultipart()
                             msg['From'] = remitente_email
                             msg['To'] = email_destino
@@ -124,17 +137,17 @@ if archivo_subido is not None:
                             cuerpo = f"""Estimado/a {col_nombre_envio},
 Adjunto encontrará el detalle y comprobante correspondiente a su pago del periodo {periodo}.
 
+Monto Total a Recibir: ${monto_neto:.2f}
+
 Atentamente,
 Gio Group SAS de CV"""
                             msg.attach(MIMEText(cuerpo, 'plain'))
 
-                            # Adjunto simulado en texto plano/archivo como comprobante
-                            contenido_recibo = f"GIO GROUP SAS DE CV\nCOMPROBANTE DE PAGO\nPeriodo: {periodo}\nEmpleado: {col_nombre_envio}\nTotal Neto: ${may_total if 'Maydely' in col_nombre_envio else luis_total:.2f}"
+                            contenido_recibo = f"GIO GROUP SAS DE CV\nCOMPROBANTE DE PAGO\nPeriodo: {periodo}\nEmpleado: {col_nombre_envio}\nTotal a Pagar: ${monto_neto:.2f}"
                             adjunto = MIMEApplication(contenido_recibo.encode('utf-8'), Name="Recibo_Pago.txt")
                             adjunto['Content-Disposition'] = 'attachment; filename="Recibo_Pago.txt"'
                             msg.attach(adjunto)
 
-                            # Conexión SMTP de Gmail
                             server = smtplib.SMTP('smtp.gmail.com', 587)
                             server.starttls()
                             server.login(remitente_email, password_email)
@@ -146,6 +159,7 @@ Gio Group SAS de CV"""
                             st.error(f"Error al enviar correo: {ex}")
 
     except Exception as e:
+        st.error(f"Error procesando el archivo: {e}")
         st.error(f"Error procesando el archivo: {e}")
 
     except Exception as e:
