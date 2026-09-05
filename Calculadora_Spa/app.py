@@ -27,12 +27,10 @@ st.markdown(esconder_menu, unsafe_allow_html=True)
 
 st.title("💆‍♂️ Gio Group SAS de CV - Control Integral de Planillas")
 
-# --- CONFIGURACIÓN LATERAL ---
-st.sidebar.header("⚙️ Configuración General")
-periodo = st.sidebar.radio("Selecciona el periodo:", ("Quincenal", "Mensual"))
-
-base_masajistas = st.sidebar.number_input("Sueldo Base Estándar ($):", value=183.96 if periodo == "Quincenal" else 367.92, step=10.0)
-base_fijos = st.sidebar.number_input("Sueldo Base Administrativo ($):", value=300.00 if periodo == "Quincenal" else 600.00, step=10.0)
+# --- CONFIGURACIÓN BASE ---
+st.sidebar.header("⚙️ Configuración Base")
+base_masajistas = st.sidebar.number_input("Sueldo Base Estándar ($):", value=183.96, step=10.0)
+base_fijos = st.sidebar.number_input("Sueldo Base Administrativo ($):", value=300.00, step=10.0)
 
 empleados_lista = [
     "Maydely Hernández", 
@@ -44,7 +42,6 @@ empleados_lista = [
     "Mario de Paz"
 ]
 
-# Inicializar memoria de sesión para comisiones si no existe
 for emp in empleados_lista:
     if f"com_{emp}" not in st.session_state:
         st.session_state[f"com_{emp}"] = 0.0
@@ -53,13 +50,12 @@ for emp in empleados_lista:
 st.subheader("📂 Reporte de Ingresos (PDF)")
 archivo_subido = st.file_uploader("Sube el archivo PDF de ingresos aquí", type=["pdf", "xlsx", "csv"])
 
-totales_brutos_pdf = {
-    "Maydely Hernández": 0.0,
-    "Luis Violante": 0.0,
-    "Jessica Lemus": 0.0
+datos_pdf_brutos = {
+    "Maydely Hernández": {"estandar": 0.0, "pub": 0.0, "total_serv": 0.0},
+    "Luis Violante": {"estandar": 0.0, "pub": 0.0, "total_serv": 0.0},
+    "Jessica Lemus": {"estandar": 0.0, "pub": 0.0, "total_serv": 0.0}
 }
 
-# Procesar PDF si se sube y actualizar la sesión inmediatamente
 if archivo_subido is not None:
     try:
         if archivo_subido.name.endswith('.pdf'):
@@ -87,34 +83,34 @@ if archivo_subido is not None:
                     df_reporte[col_precio] = df_reporte[col_precio].astype(str).str.replace(r'[\$,\n]', '', regex=True)
                     df_reporte[col_precio] = pd.to_numeric(df_reporte[col_precio], errors='coerce').fillna(0.0)
 
-                    def calc_estandar(nombre):
-                        df_prof = df_reporte[df_reporte[col_prof].astype(str).str.contains(nombre, case=False, na=False)]
+                    def procesar_datos_emp(nombre_corto):
+                        df_prof = df_reporte[df_reporte[col_prof].astype(str).str.contains(nombre_corto, case=False, na=False)]
+                        tot_servicios = df_prof[col_precio].sum()
+                        
+                        # Cálculo estándar (servicios >= 60 menos 25% publicidad)
                         df_extras = df_prof[df_prof[col_precio] >= 60].copy()
-                        df_extras['EXTRA_BASE'] = df_extras[col_precio] - 60
-                        total_bruto = df_extras['EXTRA_BASE'].sum()
-                        desc_pub = total_bruto * 0.25
-                        return max(0.0, total_bruto - desc_pub)
+                        df_extras['EXTRA_BASE'] = df_extras['PRECIO'] - 60 if 'PRECIO' in df_extras.columns else df_extras[col_precio] - 60
+                        total_bruto_extras = df_extras['EXTRA_BASE'].sum()
+                        desc_pub = total_bruto_extras * 0.25
+                        neto_estandar = max(0.0, total_bruto_extras - desc_pub)
+                        
+                        return {
+                            "estandar": neto_estandar,
+                            "pub": desc_pub,
+                            "total_serv": tot_servicios
+                        }
 
-                    def calc_total_servicios(nombre):
-                        df_prof = df_reporte[df_reporte[col_prof].astype(str).str.contains(nombre, case=False, na=False)]
-                        return df_prof[col_precio].sum()
+                    datos_pdf_brutos["Maydely Hernández"] = procesar_datos_emp("MAYDELY")
+                    datos_pdf_brutos["Luis Violante"] = procesar_datos_emp("LUIS")
+                    datos_pdf_brutos["Jessica Lemus"] = procesar_datos_emp("JESSICA")
 
-                    # Asignar a la memoria de sesión para que las casillas lo reflejen
-                    st.session_state["com_{}".format("Maydely Hernández")] = calc_estandar("MAYDELY")
-                    st.session_state["com_{}".format("Luis Violante")] = calc_estandar("LUIS")
-                    st.session_state["com_{}".format("Jessica Lemus")] = calc_total_servicios("JESSICA") * 0.20
-
-                    totales_brutos_pdf["Maydely Hernández"] = calc_total_servicios("MAYDELY")
-                    totales_brutos_pdf["Luis Violante"] = calc_total_servicios("LUIS")
-                    totales_brutos_pdf["Jessica Lemus"] = calc_total_servicios("JESSICA")
-
-                    st.success("¡Reporte PDF leído y comisiones calculadas con éxito!")
+                    st.success("¡Reporte PDF leído y analizado con éxito!")
     except Exception as e:
         st.warning(f"Advertencia al leer PDF: {e}")
 
 # --- PANEL DE PERSONALIZACIÓN Y MODALIDADES ---
 st.subheader("✍️ Ajustes, Comisiones y Modalidades por Empleado")
-st.markdown("Revisa o modifica los valores calculados, cambia modalidades por porcentaje y agrega bonos o descuentos:")
+st.markdown("Elige si el colaborador opera bajo el esquema Estándar (con sueldo y descuento de publicidad) o por Porcentaje Directo (sin descuento de publicidad):")
 
 datos_empleados = []
 
@@ -124,46 +120,56 @@ for emp in empleados_lista:
         
         base_sugerido = base_fijos if "Gio" in emp or "Gerson" in emp or "Edwin" in emp else base_masajistas
         
+        desc_pub_actual = 0.0
+        comision_calculada = 0.0
+        modalidad_str = "Estándar"
+
         with col1:
             sueldo_base = st.number_input(f"Sueldo Base ($) [{emp}]", value=float(base_sugerido), key=f"base_{emp}")
             
-            # Modalidad de porcentaje para Maydely, Luis y Jessica
             if emp in ["Maydely Hernández", "Luis Violante", "Jessica Lemus"]:
                 modalidad = st.selectbox(
-                    f"Modalidad de Comisión [{emp}]", 
-                    ["Estándar (Servicios >= $60 - 25%)", "Porcentaje Directo (%)"],
+                    f"Modalidad de Pago [{emp}]", 
+                    ["Estándar (Sueldo + Comisiones con 25% Publicidad)", "Porcentaje Directo (Ej. 20% sobre todo lo trabajado)"],
                     key=f"mod_{emp}"
                 )
                 
-                if modalidad == "Porcentaje Directo (%)":
-                    porc_pred = 20 if emp == "Jessica Lemus" else 20
-                    porc_personalizado = st.slider(f"Porcentaje Aplicado (%) [{emp}]", min_value=0, max_value=100, value=porc_pred, key=f"porc_{emp}")
-                    total_serv_bruto = totales_brutos_pdf.get(emp, 0.0)
-                    st.session_state[f"com_{emp}"] = total_serv_bruto * (porc_personalizado / 100.0)
-            
-            comision_extra = st.number_input(
-                f"Comisiones / Servicios ($) [{emp}]", 
-                key=f"com_{emp}", 
-                step=5.0
-            )
+                info_emp = datos_pdf_brutos.get(emp, {"estandar": 0.0, "pub": 0.0, "total_serv": 0.0})
+                
+                if "Estándar" in modalidad:
+                    modalidad_str = "Estándar"
+                    comision_calculada = info_emp["estandar"]
+                    desc_pub_actual = info_emp["pub"]
+                else:
+                    modalidad_str = "Porcentaje Directo"
+                    porc_def = 20 if emp == "Jessica Lemus" else 20
+                    porc_personalizado = st.slider(f"Porcentaje Directo (%) [{emp}]", min_value=0, max_value=100, value=porc_def, key=f"porc_{emp}")
+                    comision_calculada = info_emp["total_serv"] * (porc_personalizado / 100.0)
+                    desc_pub_actual = 0.0 # No aplica deducción de publicidad en porcentaje directo
+            else:
+                comision_calculada = 0.0
+
+            comision_extra = st.number_input(f"Comisiones / Servicios ($) [{emp}]", value=float(comision_calculada), key=f"com_{emp}", step=5.0)
 
         with col2:
             horas_extras = st.number_input(f"Horas Extra / Bonos ($) [{emp}]", value=0.0, key=f"hex_{emp}", step=5.0)
-            descuentos = st.number_input(f"Total Descuentos ($) [{emp}]", value=0.0, key=f"desc_{emp}", step=5.0)
+            descuentos_extras = st.number_input(f"Otros Descuentos ($) [{emp}]", value=0.0, key=f"desc_{emp}", step=5.0)
         
         with col3:
             nota_descuento = st.text_input(f"Nota / Motivo Descuento [{emp}]", value="Ninguno", key=f"nota_{emp}")
             email_emp = st.text_input(f"Correo Electrónico [{emp}]", value="gersonmolina67@gmail.com" if "Gerson" in emp else "", key=f"email_{emp}")
 
         total_bruto = sueldo_base + comision_extra + horas_extras
-        total_neto = total_bruto - descuentos
+        total_neto = total_bruto - descuentos_extras
         
         datos_empleados.append({
             "Empleado": emp,
             "Sueldo Base": sueldo_base,
             "Comisiones": comision_extra,
             "Horas Extra/Bonos": horas_extras,
-            "Descuentos": descuentos,
+            "Modalidad": modalidad_str,
+            "Descuento Publicidad": desc_pub_actual,
+            "Otros Descuentos": descuentos_extras,
             "Nota Descuento": nota_descuento,
             "Total a Pagar ($)": total_neto,
             "Email": email_emp
@@ -172,8 +178,8 @@ for emp in empleados_lista:
 df_resumen = pd.DataFrame(datos_empleados)
 
 st.subheader("📋 Resumen General de Planilla")
-st.dataframe(df_resumen[["Empleado", "Sueldo Base", "Comisiones", "Horas Extra/Bonos", "Descuentos", "Total a Pagar ($)"]].style.format({
-    "Sueldo Base": "{:.2f}", "Comisiones": "{:.2f}", "Horas Extra/Bonos": "{:.2f}", "Descuentos": "{:.2f}", "Total a Pagar ($)": "{:.2f}"
+st.dataframe(df_resumen[["Empleado", "Sueldo Base", "Comisiones", "Modalidad", "Descuento Publicidad", "Total a Pagar ($)"]].style.format({
+    "Sueldo Base": "{:.2f}", "Comisiones": "{:.2f}", "Descuento Publicidad": "{:.2f}", "Total a Pagar ($)": "{:.2f}"
 }))
 
 # --- APARTADO DE CORREOS Y RECIBOS PDF ---
@@ -194,7 +200,7 @@ if st.button("Generar PDF y Enviar por Correo"):
                     self.cell(0, 10, 'GIO GROUP SAS DE CV', 0, 1, 'L')
                     self.set_font('helvetica', '', 10)
                     self.set_text_color(100, 100, 100)
-                    self.cell(0, 5, f'Comprobante Oficial de Pago - Periodo: {periodo}', 0, 1, 'L')
+                    self.cell(0, 5, f'Comprobante Oficial de Pago - Modalidad: {emp_data["Modalidad"]}', 0, 1, 'L')
                     self.cell(0, 5, f"Fecha de Emision: {datetime.now().strftime('%d/%m/%Y')}", 0, 1, 'L')
                     self.ln(5)
 
@@ -210,7 +216,7 @@ if st.button("Generar PDF y Enviar por Correo"):
             pdf.set_font('helvetica', 'B', 11)
             pdf.set_fill_color(240, 243, 246)
             pdf.set_text_color(50, 50, 50)
-            pdf.cell(0, 10, f" Colaborador/a: {emp_data['Empleado']}", 0, 1, 'L', fill=True)
+            pdf.cell(0, 10, f" Colaborador/a: {emp_data['Empleado']} ({emp_data['Modalidad']})", 0, 1, 'L', fill=True)
             pdf.ln(5)
 
             pdf.set_font('helvetica', 'B', 10)
@@ -225,27 +231,47 @@ if st.button("Generar PDF y Enviar por Correo"):
             conceptos = [
                 ("Sueldo Base", emp_data['Sueldo Base']),
                 ("Comisiones y Servicios", emp_data['Comisiones']),
-                ("Horas Extra / Bonos", emp_data['Horas Extra/Bonos']),
-                ("Descuentos Aplicados", -emp_data['Descuentos'])
+                ("Horas Extra / Bonos", emp_data['Horas Extra/Bonos'])
             ]
 
             for desc, val in conceptos:
                 pdf.cell(130, 8, f"  {desc}", 1, 0, 'L')
                 pdf.cell(60, 8, f"${val:.2f} ", 1, 1, 'R')
 
+            # Si aplica descuento de publicidad (esquema estándar)
+            if emp_data['Descuento Publicidad'] > 0:
+                pdf.set_text_color(201, 42, 42)
+                pdf.cell(130, 8, "  (-) Retención de 25% para Publicidad", 1, 0, 'L')
+                pdf.cell(60, 8, f"-${emp_data['Descuento Publicidad']:.2f} ", 1, 1, 'R')
+                pdf.set_text_color(50, 50, 50)
+
+            if emp_data['Otros Descuentos'] > 0:
+                pdf.set_text_color(201, 42, 42)
+                pdf.cell(130, 8, "  (-) Otros Descuentos Aplicados", 1, 0, 'L')
+                pdf.cell(60, 8, f"-${emp_data['Otros Descuentos']:.2f} ", 1, 1, 'R')
+                pdf.set_text_color(50, 50, 50)
+
+            # Total Neto
             pdf.set_font('helvetica', 'B', 11)
             pdf.set_fill_color(230, 235, 240)
             pdf.cell(130, 10, "  TOTAL NETO A RECIBIR", 1, 0, 'L', fill=True)
             pdf.cell(60, 10, f"${emp_data['Total a Pagar ($)']:.2f} ", 1, 1, 'R', fill=True)
             pdf.ln(8)
 
+            # Notas
             pdf.set_font('helvetica', 'B', 10)
             pdf.set_text_color(0, 86, 179)
-            pdf.cell(0, 6, "Motivo / Nota de Descuentos o Ajustes:", 0, 1, 'L')
+            pdf.cell(0, 6, "Motivo / Notas de Descuentos o Deducciones:", 0, 1, 'L')
             
             pdf.set_font('helvetica', '', 10)
             pdf.set_text_color(50, 50, 50)
-            pdf.multi_cell(0, 6, emp_data['Nota Descuento'], 1, 'L')
+            nota_completa = f"Nota: {emp_data['Nota Descuento']}"
+            if emp_data['Modalidad'] == "Estándar" and emp_data['Descuento Publicidad'] > 0:
+                nota_completa += " | Incluye retención del 25% destinada a publicidad institucional."
+            elif emp_data['Modalidad'] == "Porcentaje Directo":
+                nota_completa += " | Modalidad de porcentaje directo aplicada (sin deducción de publicidad)."
+            
+            pdf.multi_cell(0, 6, nota_completa, 1, 'L')
 
             pdf_path = f"Recibo_{empleado_seleccionado.replace(' ', '_')}.pdf"
             pdf.output(pdf_path)
@@ -256,14 +282,12 @@ if st.button("Generar PDF y Enviar por Correo"):
             msg = MIMEMultipart()
             msg['From'] = remitente_email
             msg['To'] = emp_data['Email']
-            msg['Subject'] = f"Comprobante de Pago Oficial - {periodo} - Gio Group SAS de CV"
+            msg['Subject'] = f"Comprobante de Pago Oficial - {emp_data['Modalidad']} - Gio Group SAS de CV"
 
             cuerpo = f"""Estimado/a {empleado_seleccionado},
 
-Adjunto encontrará su recibo y comprobante de pago oficial correspondiente al periodo {periodo}.
+Adjunto encontrará su comprobante de pago oficial correspondiente al periodo bajo la modalidad: {emp_data['Modalidad']}.
 Monto Total Neto a Recibir: ${emp_data['Total a Pagar ($)']:.2f}
-
-Cualquier duda o aclaración sobre los montos o notas de descuento descritas en el PDF adjunto, por favor comunicarse con administración.
 
 Atentamente,
 Gio Group SAS de CV"""
