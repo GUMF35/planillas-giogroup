@@ -7,6 +7,16 @@ import pdfplumber
 
 st.set_page_config(page_title="Gestión de Planillas Spa", layout="wide")
 st.title("💆‍♂️ Sistema Integral de Pagos y Comisiones")
+# --- OCULTAR ELEMENTOS DE STREAMLIT ---
+esconder_menu = """
+<style>
+#MainMenu {visibility: hidden;}
+header {visibility: hidden;}
+footer {visibility: hidden;}
+.viewerBadge_container__1QSob {visibility: hidden;}
+</style>
+"""
+st.markdown(esconder_menu, unsafe_allow_html=True)
 
 # --- 1. CONFIGURACIÓN ---
 st.sidebar.header("⚙️ Configuración de Personal")
