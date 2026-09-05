@@ -38,8 +38,17 @@ base_fijos = st.sidebar.number_input("Sueldo Base Administrativo ($):", value=30
 st.subheader("📂 Reporte de Ingresos (PDF)")
 archivo_subido = st.file_uploader("Sube el archivo PDF de ingresos aquí", type=["pdf", "xlsx", "csv"])
 
-# Diccionario inicial de comisiones
-sugerencias_comisiones = {
+# Diccionarios para almacenar datos extraídos del PDF
+datos_pdf_brutos = {
+    "Maydely Hernández": 0.0,
+    "Luis Violante": 0.0,
+    "Jessica Lemus": 0.0,
+    "Dr. Gio Molina (Marvin Giovanni Molina Flores)": 0.0,
+    "Gerson Ulises Molina Flores": 0.0,
+    "Edwin Ponce": 0.0,
+    "Mario de Paz": 0.0
+}
+totales_servicios_brutos = {
     "Maydely Hernández": 0.0,
     "Luis Violante": 0.0,
     "Jessica Lemus": 0.0,
@@ -49,7 +58,8 @@ sugerencias_comisiones = {
     "Mario de Paz": 0.0
 }
 
-# Procesar PDF si se sube y actualizar memoria interna
+# Procesar PDF si se sube
+df = None
 if archivo_subido is not None:
     try:
         if archivo_subido.name.endswith('.pdf'):
@@ -77,7 +87,7 @@ if archivo_subido is not None:
                     df[col_precio] = df[col_precio].astype(str).str.replace(r'[\$,\n]', '', regex=True)
                     df[col_precio] = pd.to_numeric(df[col_precio], errors='coerce').fillna(0.0)
 
-                    # Cálculo para Maydely y Luis (>=60 menos 25%)
+                    # Función para calcular estándar (>=60 menos 25%)
                     def calc_may_luis(nombre):
                         df_prof = df[df[col_prof].astype(str).str.contains(nombre, case=False, na=False)]
                         df_extras = df_prof[df_prof[col_precio] >= 60].copy()
@@ -86,27 +96,22 @@ if archivo_subido is not None:
                         desc_pub = total_bruto * 0.25
                         return max(0.0, total_bruto - desc_pub)
 
-                    sugerencias_comisiones["Maydely Hernández"] = calc_may_luis("MAYDELY")
-                    sugerencias_comisiones["Luis Violante"] = calc_may_luis("LUIS")
+                    # Guardar totales generales de servicios para modalidades por porcentaje
+                    def total_servicios_emp(nombre):
+                        df_prof = df[df[col_prof].astype(str).str.contains(nombre, case=False, na=False)]
+                        return df_prof[col_precio].sum()
 
-                    # Cálculo para Jessica (Total servicios x porcentaje)
-                    j_total_bruto = df[df[col_prof].astype(str).str.contains("JESSICA", case=False, na=False)][col_precio].sum()
-                    porc_jessica_inicial = st.session_state.get("porc_Jessica Lemus", 20) / 100.0
-                    sugerencias_comisiones["Jessica Lemus"] = j_total_bruto * porc_jessica_inicial
+                    for emp_n in ["Maydely Hernández", "Luis Violante", "Jessica Lemus"]:
+                        datos_pdf_brutos[emp_n] = calc_may_luis(emp_n.split()[0])
+                        totales_servicios_brutos[emp_n] = total_servicios_emp(emp_n.split()[0])
 
                     st.success("¡Reporte PDF leído y comisiones calculadas con éxito!")
     except Exception as e:
         st.warning(f"Advertencia al leer PDF: {e}")
 
-# Sincronizar con la memoria interna de Streamlit para que las casillas muestren el valor correcto
-for emp_k, val_k in sugerencias_comisiones.items():
-    key_c = f"com_{emp_k}"
-    if key_c not in st.session_state or archivo_subido is not None:
-        st.session_state[key_c] = float(val_k)
-
 # --- PANEL DE PERSONALIZACIÓN Y MODALIDADES ---
 st.subheader("✍️ Ajustes, Comisiones y Modalidades por Empleado")
-st.markdown("Los datos del PDF se han cargado automáticamente. Puedes modificarlos, cambiar porcentajes, sumar horas extra o anotar descuentos:")
+st.markdown("Configura los sueldos, aplica modalidades por porcentaje (ej. 20%) y registra bonos o descuentos:")
 
 empleados_lista = [
     "Maydely Hernández", 
@@ -121,7 +126,7 @@ empleados_lista = [
 datos_empleados = []
 
 for emp in empleados_lista:
-    with st.expander(f"👤 {emp} - Configurar Planilla"):
+    with st.expander(f"👤 {emp} - Configurar Planilla y Modalidad"):
         col1, col2, col3 = st.columns(3)
         
         base_sugerido = base_fijos if "Gio" in emp or "Gerson" in emp or "Edwin" in emp else base_masajistas
@@ -129,14 +134,22 @@ for emp in empleados_lista:
         with col1:
             sueldo_base = st.number_input(f"Sueldo Base ($) [{emp}]", value=float(base_sugerido), key=f"base_{emp}")
             
-            # Modalidad especial de porcentaje para Jessica
-            if "Jessica" in emp:
-                porcentaje_jessica = st.slider("Porcentaje de Comisión Jessica (%)", min_value=0, max_value=100, value=20, key=f"porc_{emp}")
-                if archivo_subido is not None and 'df' in locals() and col_prof and col_precio:
-                    j_total_bruto = df[df[col_prof].astype(str).str.contains("JESSICA", case=False, na=False)][col_precio].sum()
-                    st.session_state[f"com_{emp}"] = float(j_total_bruto * (porcentaje_jessica / 100.0))
-
-            comision_extra = st.number_input(f"Comisiones / Servicios ($) [{emp}]", key=f"com_{emp}", step=5.0)
+            # Selector de Modalidad para Maydely, Luis y Jessica (o cualquier empleado)
+            comision_calculada = datos_pdf_brutos.get(emp, 0.0)
+            
+            if emp in ["Maydely Hernández", "Luis Violante", "Jessica Lemus"]:
+                modalidad = st.selectbox(
+                    f"Modalidad de Comisión [{emp}]", 
+                    ["Estándar (Servicios >= $60 - 25%)", "Porcentaje Directo (%)"],
+                    key=f"mod_{emp}"
+                )
+                
+                if modalidad == "Porcentaje Directo (%)":
+                    porc_personalizado = st.slider(f"Porcentaje Aplicado (%)", min_value=0, max_value=100, value=20 if emp == "Jessica Lemus" else 20, key=f"porc_{emp}")
+                    total_serv_bruto = totales_servicios_brutos.get(emp, 0.0)
+                    comision_calculada = total_serv_bruto * (porc_personalizado / 100.0)
+            
+            comision_extra = st.number_input(f"Comisiones / Servicios ($) [{emp}]", value=float(comision_calculada), key=f"com_{emp}", step=5.0)
 
         with col2:
             horas_extras = st.number_input(f"Horas Extra / Bonos ($) [{emp}]", value=0.0, key=f"hex_{emp}", step=5.0)
