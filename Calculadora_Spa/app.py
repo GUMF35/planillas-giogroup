@@ -8,7 +8,7 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
-from weasyprint import HTML
+from fpdf import FPDF
 
 # --- OCULTAR ELEMENTOS DE STREAMLIT ---
 esconder_menu = """
@@ -33,13 +33,11 @@ periodo = st.sidebar.radio("Selecciona el periodo:", ("Quincenal", "Mensual"))
 
 base_masajistas = st.sidebar.number_input("Sueldo Base Masajistas/Ventas ($):", value=183.96 if periodo == "Quincenal" else 367.92, step=10.0)
 base_fijos = st.sidebar.number_input("Sueldo Base Administrativo ($):", value=300.00 if periodo == "Quincenal" else 600.00, step=10.0)
-comision_jessica_def = st.sidebar.slider("Comisión Estándar Jessica (%):", min_value=0, max_value=100, value=20) / 100
 
-# --- LECTOR DE PDF (OPCIONAL PARA EXTRAS AUTOMÁTICOS) ---
-st.write("📂 **Sube tu reporte de ingresos en PDF** (opcional, para extraer datos base o ingresarlos manualmente abajo):")
+# --- LECTOR DE PDF (OPCIONAL) ---
+st.write("📂 **Sube tu reporte de ingresos en PDF** (opcional, para referencia):")
 archivo_subido = st.file_uploader("Sube tu archivo aquí", type=["pdf", "xlsx", "csv"])
 
-# Extracción inicial si hay archivo
 df = None
 if archivo_subido is not None:
     try:
@@ -58,7 +56,7 @@ if archivo_subido is not None:
             if header_idx != -1:
                 df = pd.DataFrame(todas_las_filas[header_idx+1:], columns=todas_las_filas[header_idx])
     except Exception as e:
-        st.warning(f"No se pudo leer automáticamente el PDF, se usarán valores manuales: {e}")
+        st.warning(f"Aviso de lectura de archivo: {e}")
 
 # --- PANEL DE AJUSTE MANUAL Y DETALLADO POR EMPLEADO ---
 st.subheader("✍️ Detalle y Ajustes por Empleado")
@@ -76,12 +74,10 @@ empleados_lista = [
 
 datos_empleados = []
 
-# Contenedores en pestañas o desplegables limpios para editar a cada uno
 for emp in empleados_lista:
     with st.expander(f"👤 {emp} - Ajustar Pagos y Descuentos"):
         col1, col2, col3 = st.columns(3)
         
-        # Asignar sueldo base según puesto
         base_sugerido = base_fijos if "Gio" in emp or "Gerson" in emp or "Edwin" in emp else base_masajistas
         
         with col1:
@@ -94,7 +90,6 @@ for emp in empleados_lista:
             nota_descuento = st.text_input(f"Nota / Motivo de Descuento [{emp}]", value="Ninguno", key=f"nota_{emp}")
             email_emp = st.text_input(f"Correo Electrónico [{emp}]", value="gersonmolina67@gmail.com" if "Gerson" in emp else "", key=f"email_{emp}")
 
-        # Cálculo Neto Individual
         total_bruto = sueldo_base + comision_extra + horas_extras
         total_neto = total_bruto - descuentos
         
@@ -117,10 +112,9 @@ st.dataframe(df_resumen[["Empleado", "Sueldo Base", "Comisiones", "Horas Extra/B
 }))
 
 # --- APARTADO DE GENERACIÓN Y ENVÍO DE RECIBOS PROFESIONALES ---
-st.subheader("✉️ Enviar Recibos Profesionales en PDF por Gmail")
+st.subheader("✉️ Enviar Comprobantes en PDF por Gmail")
 empleado_seleccionado = st.selectbox("Selecciona a quién generar y enviar el recibo:", empleados_lista)
 
-# Buscar datos del empleado seleccionado
 emp_data = next(item for item in datos_empleados if item["Empleado"] == empleado_seleccionado)
 
 if st.button("Generar PDF y Enviar por Correo"):
@@ -128,87 +122,76 @@ if st.button("Generar PDF y Enviar por Correo"):
         st.error(f"⚠️ El empleado {empleado_seleccionado} no tiene un correo electrónico válido registrado.")
     else:
         try:
-            # 1. Crear el diseño HTML profesional del recibo
-            html_content = f"""
-            <!DOCTYPE html>
-            <html>
-            <head>
-            <meta charset="utf-8">
-            <style>
-                @page {{ size: A4; margin: 20mm; background-color: #ffffff; }}
-                body {{ font-family: 'Helvetica', Arial, sans-serif; color: #333333; margin: 0; padding: 0; }}
-                .header {{ border-bottom: 2px solid #0056b3; padding-bottom: 10px; margin-bottom: 20px; }}
-                .header h1 {{ margin: 0; color: #0056b3; font-size: 22px; }}
-                .header p {{ margin: 2px 0; color: #666; font-size: 12px; }}
-                .info-box {{ background-color: #f8f9fa; border-left: 4px solid #0056b3; padding: 10px; margin-bottom: 20px; font-size: 13px; }}
-                table {{ width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 13px; }}
-                th, td {{ padding: 10px; text-align: left; border-bottom: 1px solid #dee2e6; }}
-                th {{ background-color: #f1f3f5; color: #333; }}
-                .total-row {{ font-weight: bold; background-color: #e9ecef; }}
-                .notes {{ background-color: #fff3cd; border: 1px solid #ffeeba; padding: 10px; border-radius: 4px; font-size: 12px; margin-top: 15px; }}
-                .footer {{ margin-top: 40px; text-align: center; font-size: 11px; color: #888; border-top: 1px solid #eee; padding-top: 10px; }}
-            </style>
-            </head>
-            <body>
-                <div class="header">
-                    <h1>GIO GROUP SAS DE CV</h1>
-                    <p>Comprobante Oficial de Pago - Periodo: {periodo}</p>
-                    <p>Fecha de Emisión: {datetime.now().strftime('%d/%m/%Y')}</p>
-                </div>
+            # Generar PDF limpio y profesional con FPDF
+            class PDF(FPDF):
+                def header(self):
+                    self.set_font('helvetica', 'B', 16)
+                    self.set_text_color(0, 86, 179)
+                    self.cell(0, 10, 'GIO GROUP SAS DE CV', 0, 1, 'L')
+                    self.set_font('helvetica', '', 10)
+                    self.set_text_color(100, 100, 100)
+                    self.cell(0, 5, f'Comprobante Oficial de Pago - Periodo: {periodo}', 0, 1, 'L')
+                    self.cell(0, 5, f"Fecha de Emision: {datetime.now().strftime('%d/%m/%Y')}", 0, 1, 'L')
+                    self.ln(5)
 
-                <div class="info-box">
-                    <strong>Colaborador/a:</strong> {emp_data['Empleado']}<br>
-                    <strong>Empresa:</strong> Gio Group SAS de CV
-                </div>
+                def footer(self):
+                    self.set_y(-25)
+                    self.set_font('helvetica', 'I', 8)
+                    self.set_text_color(150, 150, 150)
+                    self.cell(0, 10, 'Este documento es un comprobante digital generado por el Sistema de Planillas de Gio Group SAS de CV.', 0, 0, 'C')
 
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Concepto de Ingreso / Deducción</th>
-                            <th style="text-align: right;">Monto ($)</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr>
-                            <td>Sueldo Base</td>
-                            <td style="text-align: right;">${emp_data['Sueldo Base']:.2f}</td>
-                        </tr>
-                        <tr>
-                            <td>Comisiones y Servicios</td>
-                            <td style="text-align: right;">${emp_data['Comisiones']:.2f}</td>
-                        </tr>
-                        <tr>
-                            <td>Horas Extra / Bonos</td>
-                            <td style="text-align: right;">${emp_data['Horas Extra/Bonos']:.2f}</td>
-                        </tr>
-                        <tr>
-                            <td>Descuentos Aplicados</td>
-                            <td style="text-align: right; color: #c92a2a;">-${emp_data['Descuentos']:.2f}</td>
-                        </tr>
-                        <tr class="total-row">
-                            <td>TOTAL NETO A RECIBIR</td>
-                            <td style="text-align: right; color: #0056b3;">${emp_data['Total a Pagar ($)']:.2f}</td>
-                        </tr>
-                    </tbody>
-                </table>
+            pdf = PDF()
+            pdf.add_page()
+            
+            # Caja de datos del empleado
+            pdf.set_font('helvetica', 'B', 11)
+            pdf.set_fill_color(240, 243, 246)
+            pdf.set_text_color(50, 50, 50)
+            pdf.cell(0, 10, f" Colaborador/a: {emp_data['Empleado']}", 0, 1, 'L', fill=True)
+            pdf.ln(5)
 
-                <div class="notes">
-                    <strong>Motivo / Nota de Descuentos o Ajustes:</strong><br>
-                    {emp_data['Nota Descuento']}
-                </div>
+            # Tabla de conceptos
+            pdf.set_font('helvetica', 'B', 10)
+            pdf.set_fill_color(0, 86, 179)
+            pdf.set_text_color(255, 255, 255)
+            pdf.cell(130, 8, ' Concepto de Ingreso / Deduccion', 1, 0, 'L', fill=True)
+            pdf.cell(60, 8, ' Monto ($) ', 1, 1, 'R', fill=True)
 
-                <div class="footer">
-                    Este documento es un comprobante digital generado automáticamente por el Sistema Integral de Pagos de Gio Group SAS de CV.
-                </div>
-            </body>
-            </html>
-            """
+            pdf.set_font('helvetica', '', 10)
+            pdf.set_text_color(50, 50, 50)
+            
+            conceptos = [
+                ("Sueldo Base", emp_data['Sueldo Base']),
+                ("Comisiones y Servicios", emp_data['Comisiones']),
+                ("Horas Extra / Bonos", emp_data['Horas Extra/Bonos']),
+                ("Descuentos Aplicados", -emp_data['Descuentos'])
+            ]
 
-            # 2. Convertir HTML a PDF usando WeasyPrint
+            for desc, val in conceptos:
+                pdf.cell(130, 8, f"  {desc}", 1, 0, 'L')
+                pdf.cell(60, 8, f"${val:.2f} ", 1, 1, 'R')
+
+            # Fila Total Neto
+            pdf.set_font('helvetica', 'B', 11)
+            pdf.set_fill_color(230, 235, 240)
+            pdf.cell(130, 10, "  TOTAL NETO A RECIBIR", 1, 0, 'L', fill=True)
+            pdf.cell(60, 10, f"${emp_data['Total a Pagar ($)']:.2f} ", 1, 1, 'R', fill=True)
+            pdf.ln(8)
+
+            # Apartado de Notas
+            pdf.set_font('helvetica', 'B', 10)
+            pdf.set_text_color(0, 86, 179)
+            pdf.cell(0, 6, "Motivo / Nota de Descuentos o Ajustes:", 0, 1, 'L')
+            
+            pdf.set_font('helvetica', '', 10)
+            pdf.set_text_color(50, 50, 50)
+            pdf.multi_cell(0, 6, emp_data['Nota Descuento'], 1, 'L')
+
+            # Guardar PDF localmente
             pdf_path = f"Recibo_{empleado_seleccionado.replace(' ', '_')}.pdf"
-            HTML(string=html_content).write_pdf(pdf_path)
+            pdf.output(pdf_path)
 
-            # 3. Enviar por correo usando los Secrets de Gmail configurados
+            # Envío por correo utilizando los Secrets configurados
             remitente_email = st.secrets["EMAIL_USER"]
             password_email = st.secrets["EMAIL_PASS"]
 
@@ -228,13 +211,11 @@ Atentamente,
 Gio Group SAS de CV"""
             msg.attach(MIMEText(cuerpo, 'plain'))
 
-            # Adjuntar el archivo PDF real
             with open(pdf_path, "rb") as f:
                 adjunto = MIMEApplication(f.read(), Name=pdf_path)
             adjunto['Content-Disposition'] = f'attachment; filename="{pdf_path}"'
             msg.attach(adjunto)
 
-            # Conexión SMTP
             server = smtplib.SMTP('smtp.gmail.com', 587)
             server.starttls()
             server.login(remitente_email, password_email)
