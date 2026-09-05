@@ -211,7 +211,7 @@ if menu_seleccionado != "Configuración":
                             else:
                                 st.session_state[f"com_{emp}"] = 0.0
 
-                        st.success("✅ Sincronización exitosa. Datos de Holding y extras calculados al detalle.")
+                        st.success("✅ Sincronización exitosa. Cuentas claras netas calculadas para el Holding.")
             except Exception as e:
                 st.error(f"Error al leer el documento PDF: {e}")
 
@@ -233,9 +233,9 @@ if menu_seleccionado == "Dashboard":
         col1, col2, col3 = st.columns(3)
         col1.metric("💰 Ingresos Brutos Totales", f"${st.session_state['total_ingresos_pdf']:,.2f}")
         col2.metric("💸 Costo Operativo (Planillas)", f"${costo_planilla:,.2f}")
-        col3.metric("🏦 Utilidad Neta Real", f"${utilidad_neta:,.2f}", delta=f"{((utilidad_neta/st.session_state['total_ingresos_pdf'])*100):.1f}% Margen" if st.session_state['total_ingresos_pdf'] > 0 else "")
+        col3.metric("🏦 Utilidad Neta Real Clínica", f"${utilidad_neta:,.2f}", delta=f"{((utilidad_neta/st.session_state['total_ingresos_pdf'])*100):.1f}% Margen" if st.session_state['total_ingresos_pdf'] > 0 else "")
 
-        st.markdown("<br><h3 style='color:#0F172A;'>🎯 Rendimiento de Marcas (Holding)</h3>", unsafe_allow_html=True)
+        st.markdown("<br><h3 style='color:#0F172A;'>🎯 Rendimiento Neto de Marcas (Holding)</h3>", unsafe_allow_html=True)
         marcas = st.session_state["ingresos_por_marca"]
         extras_marcas = st.session_state.get("extras_por_marca", {})
         cols_metas = st.columns(len(marcas) if len(marcas) > 0 else 1)
@@ -245,21 +245,25 @@ if menu_seleccionado == "Dashboard":
             meta_def = 8000.0 if "Dr" in marca else 5000.0
             metas_config[marca] = cols_metas[i].number_input(f"Meta: {marca}", value=meta_def, step=500.0, key=f"meta_{marca}")
 
-        # NUEVO: Tabla actualizada con la columna de Extras (Brutos)
+        # TABLA FINANCIERA DETALLADA (BRUTO - EXTRAS = NETO)
         df_marcas = pd.DataFrame([{
             "Empresa/Marca": m, 
-            "Ingresos Generados": ing, 
-            "Extras (Brutos)": extras_marcas.get(m, 0.0),
+            "Ingresos Brutos": ing, 
+            "Extras (Para Comisiones)": extras_marcas.get(m, 0.0),
+            "NETO PARA LA CLÍNICA": ing - extras_marcas.get(m, 0.0),
             "Meta Asignada": metas_config[m], 
             "Estado": "✅ Alcanzada" if ing >= metas_config[m] else "⚠️ Pendiente"
         } for m, ing in marcas.items()])
         
-        c_chart, c_table = st.columns([2, 2])
-        with c_chart: st.bar_chart(pd.DataFrame.from_dict(marcas, orient='index', columns=['Ingresos ($)']))
+        c_chart, c_table = st.columns([2, 3])
+        with c_chart: 
+            # Gráfica basada en los Ingresos Brutos para ver volumen de ventas
+            st.bar_chart(pd.DataFrame.from_dict(marcas, orient='index', columns=['Ingresos Brutos ($)']))
         with c_table: 
             st.dataframe(df_marcas.style.format({
-                "Ingresos Generados": "${:,.2f}", 
-                "Extras (Brutos)": "${:,.2f}",
+                "Ingresos Brutos": "${:,.2f}", 
+                "Extras (Para Comisiones)": "${:,.2f}",
+                "NETO PARA LA CLÍNICA": "${:,.2f}",
                 "Meta Asignada": "${:,.2f}"
             }), hide_index=True)
 
