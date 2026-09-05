@@ -9,7 +9,6 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
 from fpdf import FPDF
-import base64
 
 # --- OCULTAR ELEMENTOS DE STREAMLIT ---
 esconder_menu = """
@@ -243,7 +242,7 @@ with tab_planillas:
     )
 
     st.markdown("---")
-    st.subheader("✉️ Vista Previa y Envío de Comprobantes de Pago")
+    st.subheader("✉️ Envío y Revisión de Comprobantes")
     emp_sel_planilla = st.selectbox("Selecciona colaborador para gestionar recibo:", empleados_lista, key="sel_emp_plan")
     
     email_actual = st.session_state.get(f"email_{emp_sel_planilla}", "gersonmolina67@gmail.com")
@@ -314,16 +313,14 @@ with tab_planillas:
     pdf_path = f"Recibo_{emp_sel_planilla.replace(' ', '_')}.pdf"
     pdf_p.output(pdf_path)
 
-    # Vista previa segura con etiqueta <embed> y botón de descarga directa para revisión
+    # Vista previa segura con botón de descarga directa
     with open(pdf_path, "rb") as f:
         pdf_bytes = f.read()
-        base64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
         
-    st.markdown("#### 👁️ Vista Previa del Recibo PDF:")
-    st.markdown(f'<embed src="data:application/pdf;base64,{base64_pdf}" width="100%" height="500px" type="application/pdf">', unsafe_allow_html=True)
+    st.info("💡 El recibo ha sido generado. Puedes descargarlo para revisarlo antes de enviarlo por correo.")
     
     st.download_button(
-        label="📥 Descargar este recibo PDF para revisión",
+        label="📄 Descargar Recibo PDF para Revisión",
         data=pdf_bytes,
         file_name=pdf_path,
         mime="application/pdf"
@@ -353,6 +350,7 @@ with tab_planillas:
                 server.sendmail(remitente_email, emp_data['Email'], msg.as_string())
                 server.quit()
                 
+                # Registrar en auditoría
                 st.session_state["historial_auditoria"].append({
                     "Fecha": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                     "Tipo": "Recibo de Planilla",
@@ -413,12 +411,11 @@ with tab_memos:
 
         with open(memo_path, "rb") as f:
             memo_bytes = f.read()
-            b64_memo = base64.b64encode(memo_bytes).decode("utf-8")
-        st.markdown("#### 👁️ Vista Previa del Memorándum:")
-        st.markdown(f'<embed src="data:application/pdf;base64,{b64_memo}" width="100%" height="400px" type="application/pdf">', unsafe_allow_html=True)
+            
+        st.info("💡 El Memorándum ha sido generado. Puedes descargarlo para revisarlo antes de enviarlo por correo.")
         
         st.download_button(
-            label="📥 Descargar este Memorándum para revisión",
+            label="📄 Descargar Memorándum PDF para Revisión",
             data=memo_bytes,
             file_name=memo_path,
             mime="application/pdf",
@@ -513,12 +510,11 @@ with tab_amonestaciones:
 
         with open(amon_path, "rb") as f:
             amon_bytes = f.read()
-            b64_amon = base64.b64encode(amon_bytes).decode("utf-8")
-        st.markdown("#### 👁️ Vista Previa del Acta de Amonestación:")
-        st.markdown(f'<embed src="data:application/pdf;base64,{b64_amon}" width="100%" height="400px" type="application/pdf">', unsafe_allow_html=True)
+            
+        st.info("💡 El acta de amonestación ha sido generada. Puedes descargarla para revisión.")
         
         st.download_button(
-            label="📥 Descargar esta Amonestación para revisión",
+            label="📄 Descargar Amonestación PDF para Revisión",
             data=amon_bytes,
             file_name=amon_path,
             mime="application/pdf",
