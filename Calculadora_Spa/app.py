@@ -314,12 +314,20 @@ with tab_planillas:
     pdf_path = f"Recibo_{emp_sel_planilla.replace(' ', '_')}.pdf"
     pdf_p.output(pdf_path)
 
-    # Vista previa interactiva en pantalla del PDF (Corregido con b64encode)
+    # Vista previa segura con etiqueta <embed> y botón de descarga directa para revisión
     with open(pdf_path, "rb") as f:
-        base64_pdf = base64.b64encode(f.read()).decode("utf-8")
-    pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="500" type="application/pdf"></iframe>'
+        pdf_bytes = f.read()
+        base64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
+        
     st.markdown("#### 👁️ Vista Previa del Recibo PDF:")
-    st.markdown(pdf_display, unsafe_allow_html=True)
+    st.markdown(f'<embed src="data:application/pdf;base64,{base64_pdf}" width="100%" height="500px" type="application/pdf">', unsafe_allow_html=True)
+    
+    st.download_button(
+        label="📥 Descargar este recibo PDF para revisión",
+        data=pdf_bytes,
+        file_name=pdf_path,
+        mime="application/pdf"
+    )
 
     if st.button("🚀 Confirmar y Enviar Recibo por Correo"):
         if not emp_data["Email"] or "@" not in emp_data["Email"]:
@@ -345,7 +353,6 @@ with tab_planillas:
                 server.sendmail(remitente_email, emp_data['Email'], msg.as_string())
                 server.quit()
                 
-                # Registrar en auditoría
                 st.session_state["historial_auditoria"].append({
                     "Fecha": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                     "Tipo": "Recibo de Planilla",
@@ -405,9 +412,18 @@ with tab_memos:
         pdf_m.output(memo_path)
 
         with open(memo_path, "rb") as f:
-            b64_memo = base64.b64encode(f.read()).decode("utf-8")
+            memo_bytes = f.read()
+            b64_memo = base64.b64encode(memo_bytes).decode("utf-8")
         st.markdown("#### 👁️ Vista Previa del Memorándum:")
-        st.markdown(f'<iframe src="data:application/pdf;base64,{b64_memo}" width="100%" height="400" type="application/pdf"></iframe>', unsafe_allow_html=True)
+        st.markdown(f'<embed src="data:application/pdf;base64,{b64_memo}" width="100%" height="400px" type="application/pdf">', unsafe_allow_html=True)
+        
+        st.download_button(
+            label="📥 Descargar este Memorándum para revisión",
+            data=memo_bytes,
+            file_name=memo_path,
+            mime="application/pdf",
+            key="down_memo"
+        )
 
     if st.button("🚀 Confirmar y Enviar Memorándum por Correo"):
         if not texto_memo:
@@ -496,9 +512,18 @@ with tab_amonestaciones:
         pdf_a.output(amon_path)
 
         with open(amon_path, "rb") as f:
-            b64_amon = base64.b64encode(f.read()).decode("utf-8")
+            amon_bytes = f.read()
+            b64_amon = base64.b64encode(amon_bytes).decode("utf-8")
         st.markdown("#### 👁️ Vista Previa del Acta de Amonestación:")
-        st.markdown(f'<iframe src="data:application/pdf;base64,{b64_amon}" width="100%" height="400" type="application/pdf"></iframe>', unsafe_allow_html=True)
+        st.markdown(f'<embed src="data:application/pdf;base64,{b64_amon}" width="100%" height="400px" type="application/pdf">', unsafe_allow_html=True)
+        
+        st.download_button(
+            label="📥 Descargar esta Amonestación para revisión",
+            data=amon_bytes,
+            file_name=amon_path,
+            mime="application/pdf",
+            key="down_amon"
+        )
 
     if st.button("🚀 Confirmar y Enviar Amonestación por Correo"):
         if not motivo_amon:
