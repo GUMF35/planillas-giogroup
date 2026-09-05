@@ -266,8 +266,6 @@ elif menu_seleccionado == "Planillas":
                     if "Porcentaje" in mod:
                         porc = st.slider(f"% Ganancia", 0, 100, st.session_state.get(f"porc_{emp}", info["porc"]), key=f"p_{emp}")
                         st.session_state[f"mod_{emp}"] = "Porcentaje Directo (%)"
-                        # Cálculo inmediato basado en el total de servicios ya escaneados del PDF
-                        st.session_state[f"com_{emp}"] = st.session_state[f"serv_tot_{emp}"] * (porc / 100.0)
                         st.session_state[f"porc_{emp}"] = porc
                     else:
                         st.session_state[f"mod_{emp}"] = "Estándar"
