@@ -38,8 +38,9 @@ base_fijos = st.sidebar.number_input("Sueldo Base Administrativo ($):", value=30
 st.subheader("📂 Reporte de Ingresos (PDF)")
 archivo_subido = st.file_uploader("Sube el archivo PDF de ingresos aquí", type=["pdf", "xlsx", "csv"])
 
-# Diccionarios para almacenar datos extraídos del PDF
-datos_pdf_brutos = {
+# Inicializar DataFrames o diccionarios base en memoria
+df_reporte = None
+comisiones_calculadas_pdf = {
     "Maydely Hernández": 0.0,
     "Luis Violante": 0.0,
     "Jessica Lemus": 0.0,
@@ -48,18 +49,13 @@ datos_pdf_brutos = {
     "Edwin Ponce": 0.0,
     "Mario de Paz": 0.0
 }
-totales_servicios_brutos = {
+totales_brutos_pdf = {
     "Maydely Hernández": 0.0,
     "Luis Violante": 0.0,
-    "Jessica Lemus": 0.0,
-    "Dr. Gio Molina (Marvin Giovanni Molina Flores)": 0.0,
-    "Gerson Ulises Molina Flores": 0.0,
-    "Edwin Ponce": 0.0,
-    "Mario de Paz": 0.0
+    "Jessica Lemus": 0.0
 }
 
 # Procesar PDF si se sube
-df = None
 if archivo_subido is not None:
     try:
         if archivo_subido.name.endswith('.pdf'):
@@ -77,33 +73,37 @@ if archivo_subido is not None:
                     break
             
             if header_idx != -1:
-                df = pd.DataFrame(todas_las_filas[header_idx+1:], columns=todas_las_filas[header_idx])
-                df.columns = df.columns.astype(str).str.strip().str.upper().str.replace('\n', ' ')
-                col_prof = next((col for col in df.columns if 'PROFESIONAL' in col), None)
-                col_precio = next((col for col in df.columns if 'PRECIO' in col), None)
+                df_reporte = pd.DataFrame(todas_las_filas[header_idx+1:], columns=todas_las_filas[header_idx])
+                df_reporte.columns = df_reporte.columns.astype(str).str.strip().str.upper().str.replace('\n', ' ')
+                col_prof = next((col for col in df_reporte.columns if 'PROFESIONAL' in col), None)
+                col_precio = next((col for col in df_reporte.columns if 'PRECIO' in col), None)
 
                 if col_prof and col_precio:
-                    df = df.dropna(subset=[col_prof, col_precio])
-                    df[col_precio] = df[col_precio].astype(str).str.replace(r'[\$,\n]', '', regex=True)
-                    df[col_precio] = pd.to_numeric(df[col_precio], errors='coerce').fillna(0.0)
+                    df_reporte = df_reporte.dropna(subset=[col_prof, col_precio])
+                    df_reporte[col_precio] = df_reporte[col_precio].astype(str).str.replace(r'[\$,\n]', '', regex=True)
+                    df_reporte[col_precio] = pd.to_numeric(df_reporte[col_precio], errors='coerce').fillna(0.0)
 
-                    # Función para calcular estándar (>=60 menos 25%)
-                    def calc_may_luis(nombre):
-                        df_prof = df[df[col_prof].astype(str).str.contains(nombre, case=False, na=False)]
+                    # Cálculo Estándar (Servicios >= 60 menos 25% publicidad)
+                    def calc_estandar(nombre):
+                        df_prof = df_reporte[df_reporte[col_prof].astype(str).str.contains(nombre, case=False, na=False)]
                         df_extras = df_prof[df_prof[col_precio] >= 60].copy()
                         df_extras['EXTRA_BASE'] = df_extras[col_precio] - 60
                         total_bruto = df_extras['EXTRA_BASE'].sum()
                         desc_pub = total_bruto * 0.25
                         return max(0.0, total_bruto - desc_pub)
 
-                    # Guardar totales generales de servicios para modalidades por porcentaje
-                    def total_servicios_emp(nombre):
-                        df_prof = df[df[col_prof].astype(str).str.contains(nombre, case=False, na=False)]
+                    # Total general de servicios (para modalidad de porcentaje directo)
+                    def calc_total_servicios(nombre):
+                        df_prof = df_reporte[df_reporte[col_prof].astype(str).str.contains(nombre, case=False, na=False)]
                         return df_prof[col_precio].sum()
 
-                    for emp_n in ["Maydely Hernández", "Luis Violante", "Jessica Lemus"]:
-                        datos_pdf_brutos[emp_n] = calc_may_luis(emp_n.split()[0])
-                        totales_servicios_brutos[emp_n] = total_servicios_emp(emp_n.split()[0])
+                    comisiones_calculadas_pdf["Maydely Hernández"] = calc_estandar("MAYDELY")
+                    comisiones_calculadas_pdf["Luis Violante"] = calc_estandar("LUIS")
+                    comisiones_calculadas_pdf["Jessica Lemus"] = calc_total_servicios("JESSICA") * 0.20 # 20% por defecto
+
+                    totales_brutos_pdf["Maydely Hernández"] = calc_total_servicios("MAYDELY")
+                    totales_brutos_pdf["Luis Violante"] = calc_total_servicios("LUIS")
+                    totales_brutos_pdf["Jessica Lemus"] = calc_total_servicios("JESSICA")
 
                     st.success("¡Reporte PDF leído y comisiones calculadas con éxito!")
     except Exception as e:
@@ -111,7 +111,7 @@ if archivo_subido is not None:
 
 # --- PANEL DE PERSONALIZACIÓN Y MODALIDADES ---
 st.subheader("✍️ Ajustes, Comisiones y Modalidades por Empleado")
-st.markdown("Configura los sueldos, aplica modalidades por porcentaje (ej. 20%) y registra bonos o descuentos:")
+st.markdown("Revisa o modifica los valores calculados, cambia modalidades por porcentaje y agrega bonos o descuentos:")
 
 empleados_lista = [
     "Maydely Hernández", 
@@ -134,9 +134,10 @@ for emp in empleados_lista:
         with col1:
             sueldo_base = st.number_input(f"Sueldo Base ($) [{emp}]", value=float(base_sugerido), key=f"base_{emp}")
             
-            # Selector de Modalidad para Maydely, Luis y Jessica (o cualquier empleado)
-            comision_calculada = datos_pdf_brutos.get(emp, 0.0)
+            # Valor sugerido inicial basado en el PDF
+            valor_sugerido_comision = comisiones_calculadas_pdf.get(emp, 0.0)
             
+            # Modalidad de porcentaje para Maydely, Luis y Jessica
             if emp in ["Maydely Hernández", "Luis Violante", "Jessica Lemus"]:
                 modalidad = st.selectbox(
                     f"Modalidad de Comisión [{emp}]", 
@@ -145,11 +146,17 @@ for emp in empleados_lista:
                 )
                 
                 if modalidad == "Porcentaje Directo (%)":
-                    porc_personalizado = st.slider(f"Porcentaje Aplicado (%)", min_value=0, max_value=100, value=20 if emp == "Jessica Lemus" else 20, key=f"porc_{emp}")
-                    total_serv_bruto = totales_servicios_brutos.get(emp, 0.0)
-                    comision_calculada = total_serv_bruto * (porc_personalizado / 100.0)
+                    porc_pred = 20 if emp == "Jessica Lemus" else 20
+                    porc_personalizado = st.slider(f"Porcentaje Aplicado (%) [{emp}]", min_value=0, max_value=100, value=porc_pred, key=f"porc_{emp}")
+                    total_serv_bruto = totales_brutos_pdf.get(emp, 0.0)
+                    valor_sugerido_comision = total_serv_bruto * (porc_personalizado / 100.0)
             
-            comision_extra = st.number_input(f"Comisiones / Servicios ($) [{emp}]", value=float(comision_calculada), key=f"com_{emp}", step=5.0)
+            comision_extra = st.number_input(
+                f"Comisiones / Servicios ($) [{emp}]", 
+                value=float(valor_sugerido_comision), 
+                key=f"com_{emp}", 
+                step=5.0
+            )
 
         with col2:
             horas_extras = st.number_input(f"Horas Extra / Bonos ($) [{emp}]", value=0.0, key=f"hex_{emp}", step=5.0)
