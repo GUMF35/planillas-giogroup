@@ -56,7 +56,6 @@ for emp, info in st.session_state["empleados"].items():
     if f"email_{emp}" not in st.session_state: st.session_state[f"email_{emp}"] = ""
     if f"porc_{emp}" not in st.session_state: st.session_state[f"porc_{emp}"] = info["porc"]
     
-    # Si es porcentaje directo, base es 0. De lo contrario, calcula el sueldo base bruto multiplicado
     mod_init = info["mod"]
     if "Porcentaje" in mod_init:
         if f"base_{emp}" not in st.session_state: st.session_state[f"base_{emp}"] = 0.0
@@ -315,7 +314,6 @@ elif menu_seleccionado == "Planillas":
                 else:
                     st.caption(f"Personal Administrativo (Sueldo Fijo)")
 
-                # Control dinámico del sueldo base según la modalidad seleccionada
                 mod_actual = st.session_state.get(f"mod_{emp}", info["mod"])
                 if info["rol"] == "Operativo" and "Porcentaje" in mod_actual:
                     st.session_state[f"base_{emp}"] = 0.0
@@ -339,7 +337,6 @@ elif menu_seleccionado == "Planillas":
                 e_em = st.text_input(f"Correo", value=st.session_state[f"email_{emp}"], key=f"ui_e_{emp}")
                 st.session_state[f"email_{emp}"] = e_em
 
-            # Renta 10% (0 para porcentaje directo)
             if info["rol"] == "Operativo" and "Porcentaje" in mod_actual:
                 renta_calculada = 0.0
             else:
@@ -369,7 +366,7 @@ elif menu_seleccionado == "Planillas":
         st.dataframe(df_res.style.format({
             "Sueldo Base (Bruto)": "${:.2f}", 
             "Extra Bruto": "${:,.2f}",
-            "Retención Pub (25%)": "${:,.2f}",
+            "Retención Pub (25%)": "${:.2f}",
             "Comisiones Netas": "${:.2f}", 
             "Bonos": "${:.2f}", 
             "Descuentos": "${:.2f}", 
@@ -404,7 +401,8 @@ elif menu_seleccionado == "Planillas":
             pdf.cell(130, 8, ' Concepto', 1, 0, 'L', fill=True); pdf.cell(60, 8, ' Monto ($)', 1, 1, 'R', fill=True)
             pdf.set_font('helvetica', '', 10); pdf.set_text_color(50, 50, 50)
             
-            for d, v in [("Sueldo Base Acumulado (Bruto)", e_dat['Sueldo Base (Bruto)']), ("Extra Bruto Generado", e_dat['Extra Bruto']), ("Comisiones Netas a Pagar", e_dat['Comisiones']), ("Bonos Extras", e_dat['Bonos'])]:
+            # CORREGIDO: Claves unificadas exactas para evitar KeyError
+            for d, v in [("Sueldo Base Acumulado (Bruto)", e_dat['Sueldo Base (Bruto)']), ("Extra Bruto Generado", e_dat['Extra Bruto']), ("Comisiones Netas a Pagar", e_dat['Comisiones Netas']), ("Bonos Extras", e_dat['Bonos'])]:
                 if v > 0 or "Sueldo" in d or "Comisiones" in d:
                     pdf.cell(130, 8, f"  {d}", 1, 0, 'L'); pdf.cell(60, 8, f"${v:.2f}", 1, 1, 'R')
             
