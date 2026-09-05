@@ -55,8 +55,14 @@ for emp, info in st.session_state["empleados"].items():
     if f"desc_{emp}" not in st.session_state: st.session_state[f"desc_{emp}"] = 0.0
     if f"email_{emp}" not in st.session_state: st.session_state[f"email_{emp}"] = ""
     if f"porc_{emp}" not in st.session_state: st.session_state[f"porc_{emp}"] = info["porc"]
-    if f"base_{emp}" not in st.session_state: 
-        st.session_state[f"base_{emp}"] = calcular_bruto_mensual(info["rol"]) * st.session_state["meses_multiplicador"]
+    
+    # Si es porcentaje directo, base es 0. De lo contrario, calcula el sueldo base bruto multiplicado
+    mod_init = info["mod"]
+    if "Porcentaje" in mod_init:
+        if f"base_{emp}" not in st.session_state: st.session_state[f"base_{emp}"] = 0.0
+    else:
+        if f"base_{emp}" not in st.session_state: 
+            st.session_state[f"base_{emp}"] = calcular_bruto_mensual(info["rol"]) * st.session_state["meses_multiplicador"]
 
 if "historial_auditoria" not in st.session_state: st.session_state["historial_auditoria"] = []
 if "ingresos_por_marca" not in st.session_state: st.session_state["ingresos_por_marca"] = {}
@@ -119,7 +125,7 @@ with st.sidebar:
         }
     )
 
-# --- 5. PANEL SUPERIOR: LECTOR DE PDF, AUTODETECCIÓN Y DEPURADOR DE CACHÉ ---
+# --- 5. PANEL SUPERIOR: LECTOR DE PDF, AUTODETECCIÓN Y DEPURADOR ---
 if menu_seleccionado != "Configuración":
     with st.container():
         st.markdown("<h2 style='color:#0F172A; font-weight:800;'>Bienvenido, Administración 👋</h2>", unsafe_allow_html=True)
@@ -130,7 +136,6 @@ if menu_seleccionado != "Configuración":
             archivo_subido = st.file_uploader("📥 Sincronizar reporte de ventas (PDF)", type=["pdf"])
         with col_up2:
             st.markdown("<br>", unsafe_allow_html=True)
-            # BOTÓN DEPURADOR / LIMPIADOR DE ARCHIVO Y CACHÉ
             if st.button("🗑️ Limpiar / Reiniciar Datos"):
                 st.session_state["total_ingresos_pdf"] = 0.0
                 st.session_state["ingresos_por_marca"] = {}
@@ -143,7 +148,10 @@ if menu_seleccionado != "Configuración":
                     st.session_state[f"extra_bruto_{emp}"] = 0.0
                     st.session_state[f"ret_pub_{emp}"] = 0.0
                     st.session_state[f"serv_tot_{emp}"] = 0.0
-                    st.session_state[f"base_{emp}"] = calcular_bruto_mensual(info["rol"])
+                    if "Porcentaje" in info["mod"]:
+                        st.session_state[f"base_{emp}"] = 0.0
+                    else:
+                        st.session_state[f"base_{emp}"] = calcular_bruto_mensual(info["rol"])
                 st.success("¡Datos y caché depurados correctamente. Listo para nuevo archivo!")
                 st.rerun()
 
@@ -212,14 +220,17 @@ if menu_seleccionado != "Configuración":
                         
                         st.session_state["total_fondo_publicidad"] = 0.0
                         for emp, info in st.session_state["empleados"].items():
-                            st.session_state[f"base_{emp}"] = calcular_bruto_mensual(info["rol"]) * st.session_state["meses_multiplicador"]
+                            mod_actual = st.session_state.get(f"mod_{emp}", info["mod"])
+                            if "Porcentaje" in mod_actual:
+                                st.session_state[f"base_{emp}"] = 0.0
+                            else:
+                                st.session_state[f"base_{emp}"] = calcular_bruto_mensual(info["rol"]) * st.session_state["meses_multiplicador"]
 
                             df_p = df_reporte[df_reporte[col_prof].astype(str).str.contains(info["alias"], case=False, na=False, regex=True)]
                             tot_serv = df_p[col_precio].sum()
                             st.session_state[f"serv_tot_{emp}"] = tot_serv
                             
                             if info["rol"] == "Operativo":
-                                mod_actual = st.session_state.get(f"mod_{emp}", info["mod"])
                                 if "Estándar" in mod_actual:
                                     df_ex = df_p[df_p[col_precio] >= 60].copy()
                                     ext_bruto_total = (df_ex[col_precio] - 60).sum() if not df_ex.empty else 0.0
@@ -290,9 +301,6 @@ elif menu_seleccionado == "Planillas":
             c1, c2, c3 = st.columns([1.2, 1, 1])
 
             with c1:
-                val_base = st.number_input(f"Sueldo Base (Bruto) ($)", value=float(st.session_state[f"base_{emp}"]), key=f"ui_b_{emp}")
-                st.session_state[f"base_{emp}"] = val_base
-                
                 if info["rol"] == "Operativo":
                     mod = st.selectbox(f"Modalidad", ["Estándar (Con retención 25% Pub)", "Porcentaje Directo (%)"], index=0 if "Estándar" in st.session_state.get(f"mod_{emp}", info["mod"]) else 1, key=f"m_{emp}")
                     if "Estándar" in mod:
@@ -306,6 +314,15 @@ elif menu_seleccionado == "Planillas":
                         st.session_state[f"porc_{emp}"] = porc
                 else:
                     st.caption(f"Personal Administrativo (Sueldo Fijo)")
+
+                # Control dinámico del sueldo base según la modalidad seleccionada
+                mod_actual = st.session_state.get(f"mod_{emp}", info["mod"])
+                if info["rol"] == "Operativo" and "Porcentaje" in mod_actual:
+                    st.session_state[f"base_{emp}"] = 0.0
+                    st.write("Sueldo Base (Bruto): **$0.00** (Modalidad Porcentaje)")
+                else:
+                    val_base = st.number_input(f"Sueldo Base (Bruto) ($)", value=float(st.session_state[f"base_{emp}"]), key=f"ui_b_{emp}")
+                    st.session_state[f"base_{emp}"] = val_base
 
                 val_com = st.number_input(f"Comisiones Netas ($)", value=float(st.session_state[f"com_{emp}"]), key=f"ui_c_{emp}")
                 st.session_state[f"com_{emp}"] = val_com
@@ -322,8 +339,7 @@ elif menu_seleccionado == "Planillas":
                 e_em = st.text_input(f"Correo", value=st.session_state[f"email_{emp}"], key=f"ui_e_{emp}")
                 st.session_state[f"email_{emp}"] = e_em
 
-            # Renta 10%
-            mod_actual = st.session_state.get(f"mod_{emp}", info["mod"])
+            # Renta 10% (0 para porcentaje directo)
             if info["rol"] == "Operativo" and "Porcentaje" in mod_actual:
                 renta_calculada = 0.0
             else:
@@ -354,11 +370,11 @@ elif menu_seleccionado == "Planillas":
             "Sueldo Base (Bruto)": "${:.2f}", 
             "Extra Bruto": "${:,.2f}",
             "Retención Pub (25%)": "${:,.2f}",
-            "Comisiones Netas": "${:,.2f}", 
-            "Bonos": "${:,.2f}", 
-            "Descuentos": "${:,.2f}", 
-            "10% Renta": "${:,.2f}", 
-            "Total a Pagar": "${:,.2f}"
+            "Comisiones Netas": "${:.2f}", 
+            "Bonos": "${:.2f}", 
+            "Descuentos": "${:.2f}", 
+            "10% Renta": "${:.2f}", 
+            "Total a Pagar": "${:.2f}"
         }), use_container_width=True, hide_index=True)
 
         out_ex = io.BytesIO()
@@ -389,7 +405,8 @@ elif menu_seleccionado == "Planillas":
             pdf.set_font('helvetica', '', 10); pdf.set_text_color(50, 50, 50)
             
             for d, v in [("Sueldo Base Acumulado (Bruto)", e_dat['Sueldo Base (Bruto)']), ("Extra Bruto Generado", e_dat['Extra Bruto']), ("Comisiones Netas a Pagar", e_dat['Comisiones']), ("Bonos Extras", e_dat['Bonos'])]:
-                pdf.cell(130, 8, f"  {d}", 1, 0, 'L'); pdf.cell(60, 8, f"${v:.2f}", 1, 1, 'R')
+                if v > 0 or "Sueldo" in d or "Comisiones" in d:
+                    pdf.cell(130, 8, f"  {d}", 1, 0, 'L'); pdf.cell(60, 8, f"${v:.2f}", 1, 1, 'R')
             
             pdf.set_text_color(201, 42, 42)
             if e_dat['Descuentos'] > 0:
@@ -432,7 +449,8 @@ elif menu_seleccionado == "Configuración":
         if st.button("Aplicar Multiplicador Manual"):
             st.session_state["meses_multiplicador"] = float(meses_manual)
             for emp, info in st.session_state["empleados"].items():
-                st.session_state[f"base_{emp}"] = calcular_bruto_mensual(info["rol"]) * st.session_state["meses_multiplicador"]
+                if not "Porcentaje" in info["mod"]:
+                    st.session_state[f"base_{emp}"] = calcular_bruto_mensual(info["rol"]) * st.session_state["meses_multiplicador"]
             st.success("Multiplicador manual aplicado.")
             st.rerun()
 
@@ -456,7 +474,10 @@ elif menu_seleccionado == "Configuración":
                 st.session_state[f"email_{n_nombre}"] = ""
                 st.session_state[f"hex_{n_nombre}"] = 0.0
                 st.session_state[f"desc_{n_nombre}"] = 0.0
-                st.session_state[f"base_{n_nombre}"] = calcular_bruto_mensual(n_rol) * st.session_state["meses_multiplicador"]
+                if "Porcentaje" in n_mod:
+                    st.session_state[f"base_{n_nombre}"] = 0.0
+                else:
+                    st.session_state[f"base_{n_nombre}"] = calcular_bruto_mensual(n_rol) * st.session_state["meses_multiplicador"]
                 st.success(f"{n_nombre} guardado exitosamente.")
                 st.rerun()
 
