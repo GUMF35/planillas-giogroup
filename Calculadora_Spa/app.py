@@ -38,6 +38,7 @@ if "salario_operativo_neto" not in st.session_state: st.session_state["salario_o
 if "salario_directivo_neto" not in st.session_state: st.session_state["salario_directivo_neto"] = 300.00 # Neto por Quincena
 if "quincenas_multiplicador" not in st.session_state: st.session_state["quincenas_multiplicador"] = 1.0
 if "periodo_texto" not in st.session_state: st.session_state["periodo_texto"] = "1 Quincena (Por defecto)"
+if "detalle_extras" not in st.session_state: st.session_state["detalle_extras"] = [] # NUEVO: Guardará el detalle servicio por servicio
 
 if "empleados" not in st.session_state:
     st.session_state["empleados"] = {
@@ -152,6 +153,7 @@ if menu_seleccionado != "Configuración":
                 st.session_state["total_fondo_publicidad"] = 0.0
                 st.session_state["quincenas_multiplicador"] = 1.0
                 st.session_state["periodo_texto"] = "1 Quincena (Por defecto)"
+                st.session_state["detalle_extras"] = [] # Vaciamos el detalle informativo
                 for emp, info in st.session_state["empleados"].items():
                     st.session_state[f"com_{emp}"] = 0.0
                     st.session_state[f"extra_bruto_{emp}"] = 0.0
@@ -211,8 +213,13 @@ if menu_seleccionado != "Configuración":
                 if header_idx != -1:
                     df_reporte = pd.DataFrame(todas_las_filas[header_idx+1:], columns=todas_las_filas[header_idx])
                     df_reporte.columns = df_reporte.columns.astype(str).str.strip().str.upper().str.replace('\n', ' ')
+                    
                     col_prof = next((col for col in df_reporte.columns if 'PROFESIONAL' in col), None)
                     col_precio = next((col for col in df_reporte.columns if 'PRECIO' in col), None)
+                    # Extras informativos: Detectamos Cliente, Correlativo y Servicio
+                    col_cliente = next((col for col in df_reporte.columns if 'CLIENTE' in col), None)
+                    col_corr = next((col for col in df_reporte.columns if 'CORRELATIVO' in col), None)
+                    col_serv = next((col for col in df_reporte.columns if 'SERVICIO' in col), None)
 
                     if col_prof and col_precio:
                         df_reporte = df_reporte.dropna(subset=[col_prof, col_precio])
@@ -238,6 +245,8 @@ if menu_seleccionado != "Configuración":
                         st.session_state["extras_por_marca"] = df_reporte.groupby('MARCA')['EXTRA_BRUTO'].sum().to_dict()
 
                         st.session_state["total_fondo_publicidad"] = 0.0
+                        lista_detalles_extra = [] # Lista temporal para guardar el desglose
+
                         for emp, info in st.session_state["empleados"].items():
                             mod_actual = st.session_state.get(f"mod_{emp}", info["mod"])
                             if "Porcentaje" in mod_actual:
@@ -251,15 +260,50 @@ if menu_seleccionado != "Configuración":
 
                             if info["rol"] == "Operativo":
                                 if "Estándar" in mod_actual:
-                                    df_ex = df_p[df_p[col_precio] >= 60].copy()
-                                    ext_bruto_total = (df_ex[col_precio] - 60).sum() if not df_ex.empty else 0.0
-                                    desc_pub = ext_bruto_total * 0.25
-                                    comision_neta = max(0.0, ext_bruto_total - desc_pub)
+                                    df_ex = df_p[df_p[col_precio] > 60.0].copy() # Filtrar solo los que generan extra
+                                    
+                                    ext_bruto_total = 0.0
+                                    desc_pub_total = 0.0
+                                    
+                                    if not df_ex.empty:
+                                        for _, row_ex in df_ex.iterrows():
+                                            precio_val = float(row_ex[col_precio])
+                                            extra_indiv = precio_val - 60.0
+                                            ret_indiv = extra_indiv * 0.25
+                                            com_indiv = extra_indiv - ret_indiv
+                                            
+                                            ext_bruto_total += extra_indiv
+                                            desc_pub_total += ret_indiv
+                                            
+                                            # Formateo de fecha para reporte
+                                            c_corr = str(row_ex[col_corr]) if col_corr else "N/A"
+                                            fecha_str = c_corr.split('-')[0] if '-' in c_corr else c_corr
+                                            try:
+                                                if len(fecha_str) == 8:
+                                                    fecha_fmt = f"{fecha_str[6:8]}/{fecha_str[4:6]}/{fecha_str[0:4]}"
+                                                else:
+                                                    fecha_fmt = fecha_str
+                                            except:
+                                                fecha_fmt = fecha_str
 
+                                            # Guardado en lista
+                                            lista_detalles_extra.append({
+                                                "Colaborador": emp,
+                                                "Fecha": fecha_fmt,
+                                                "Cliente": str(row_ex[col_cliente]).replace('\n', ' ') if col_cliente else "N/A",
+                                                "Servicio": str(row_ex[col_serv]).replace('\n', ' ') if col_serv else "N/A",
+                                                "Precio Final": precio_val,
+                                                "Extra Generado": extra_indiv,
+                                                "Retención (25%)": ret_indiv,
+                                                "Comisión Neta": com_indiv
+                                            })
+                                    
+                                    comision_neta_total = max(0.0, ext_bruto_total - desc_pub_total)
+                                    
                                     st.session_state[f"extra_bruto_{emp}"] = ext_bruto_total
-                                    st.session_state[f"com_{emp}"] = comision_neta
-                                    st.session_state[f"ret_pub_{emp}"] = desc_pub
-                                    st.session_state["total_fondo_publicidad"] += desc_pub
+                                    st.session_state[f"com_{emp}"] = comision_neta_total
+                                    st.session_state[f"ret_pub_{emp}"] = desc_pub_total
+                                    st.session_state["total_fondo_publicidad"] += desc_pub_total
                                 else:
                                     porc = st.session_state.get(f"porc_{emp}", info["porc"])
                                     st.session_state[f"extra_bruto_{emp}"] = 0.0
@@ -269,8 +313,9 @@ if menu_seleccionado != "Configuración":
                                 st.session_state[f"extra_bruto_{emp}"] = 0.0
                                 st.session_state[f"com_{emp}"] = 0.0
                                 st.session_state[f"ret_pub_{emp}"] = 0.0
-
-                        st.success(f"✅ ¡PDF analizado con éxito!")
+                                
+                        st.session_state["detalle_extras"] = lista_detalles_extra
+                        st.success(f"✅ ¡PDF analizado con éxito! {st.session_state['periodo_texto']}")
                     else:
                         st.warning("⚠️ Se encontró una tabla, pero no se pudieron identificar las columnas 'PROFESIONAL' y 'PRECIO'.")
                 else:
@@ -334,6 +379,20 @@ if menu_seleccionado == "Dashboard":
 
 elif menu_seleccionado == "Planillas":
     st.markdown("<h2 style='color:#0F172A;'>Control Financiero de Planillas</h2>", unsafe_allow_html=True)
+    
+    # NUEVO APARTADO: Desglose Informativo de Extras
+    if st.session_state.get("detalle_extras"):
+        with st.expander("🔍 Ver Desglose Informativo: Servicios con Extra Generado", expanded=False):
+            st.info("Este apartado es informativo. Desglosa los servicios mayores a $60 para el personal Estándar.")
+            df_det = pd.DataFrame(st.session_state["detalle_extras"])
+            st.dataframe(df_det.style.format({
+                "Precio Final": "${:.2f}",
+                "Extra Generado": "${:.2f}",
+                "Retención (25%)": "${:.2f}",
+                "Comisión Neta": "${:.2f}"
+            }), use_container_width=True, hide_index=True)
+            
+    st.markdown("<br>", unsafe_allow_html=True)
     datos_emp = []
 
     for emp, info in st.session_state["empleados"].items():
