@@ -3,6 +3,7 @@ import pandas as pd
 import io
 import os
 import re
+import json
 from datetime import datetime
 import pdfplumber
 import smtplib
@@ -14,13 +15,38 @@ import base64
 from PIL import Image
 from streamlit_option_menu import option_menu
 
-# --- 0. UTILIDADES DE SEGURIDAD FPDF ---
+# --- 0. UTILIDADES DE SEGURIDAD Y BASE DE DATOS ---
 def limpiar_texto_pdf(txt):
     if txt is None: return ""
     return str(txt).encode('latin-1', 'replace').decode('latin-1')
 
 def generar_pdf_bytes(pdf_obj):
     return bytes(pdf_obj.output())
+
+# Archivo de base de datos local
+DB_FILE = "empleados_db.json"
+
+def cargar_empleados():
+    if os.path.exists(DB_FILE):
+        try:
+            with open(DB_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            pass
+    # Base por defecto si no existe el archivo
+    return {
+        "Maydely Hernández": {"rol": "Operativo", "alias": "MAYDELY", "mod": "Estándar (Con retención 25% Pub)", "porc": 20, "correo": "", "dui": "", "cuenta": ""},
+        "Luis Violante": {"rol": "Operativo", "alias": "LUIS", "mod": "Estándar (Con retención 25% Pub)", "porc": 20, "correo": "", "dui": "", "cuenta": ""},
+        "Jessica Lemus": {"rol": "Operativo", "alias": "JESSICA", "mod": "Porcentaje Directo (%)", "porc": 20, "correo": "", "dui": "", "cuenta": ""},
+        "Mario de Paz": {"rol": "Operativo", "alias": "MARIO", "mod": "Estándar (Con retención 25% Pub)", "porc": 20, "correo": "", "dui": "", "cuenta": ""},
+        "Dr. Gio Molina": {"rol": "Administrativo", "alias": "GIO|MARVIN|DOCTOR", "mod": "Fijo", "porc": 0, "correo": "", "dui": "", "cuenta": ""},
+        "Gerson Ulises Molina Flores": {"rol": "Administrativo", "alias": "GERSON", "mod": "Fijo", "porc": 0, "correo": "", "dui": "", "cuenta": ""},
+        "Edwin Ponce": {"rol": "Administrativo", "alias": "EDWIN", "mod": "Fijo", "porc": 0, "correo": "", "dui": "", "cuenta": ""}
+    }
+
+def guardar_empleados(datos):
+    with open(DB_FILE, "w", encoding="utf-8") as f:
+        json.dump(datos, f, indent=4, ensure_ascii=False)
 
 # --- 1. CONFIGURACIÓN DE PÁGINA ---
 logo_path = os.path.join(os.path.dirname(__file__), "logo.png")
@@ -33,26 +59,17 @@ try:
 except Exception:
     st.set_page_config(page_title="Gio Group Admin", page_icon="🏢", layout="wide")
 
-# --- 2. BASE DE DATOS EN MEMORIA (CÁLCULO EXACTO POR QUINCENAS) ---
-if "salario_operativo_neto" not in st.session_state: st.session_state["salario_operativo_neto"] = 183.96 # Neto por Quincena
-if "salario_directivo_neto" not in st.session_state: st.session_state["salario_directivo_neto"] = 300.00 # Neto por Quincena
+# --- 2. BASE DE DATOS EN MEMORIA ---
+if "salario_operativo_neto" not in st.session_state: st.session_state["salario_operativo_neto"] = 183.96
+if "salario_directivo_neto" not in st.session_state: st.session_state["salario_directivo_neto"] = 300.00
 if "quincenas_multiplicador" not in st.session_state: st.session_state["quincenas_multiplicador"] = 1.0
 if "periodo_texto" not in st.session_state: st.session_state["periodo_texto"] = "1 Quincena (Por defecto)"
-if "detalle_extras" not in st.session_state: st.session_state["detalle_extras"] = [] # NUEVO: Guardará el detalle servicio por servicio
+if "detalle_extras" not in st.session_state: st.session_state["detalle_extras"] = []
 
 if "empleados" not in st.session_state:
-    st.session_state["empleados"] = {
-        "Maydely Hernández": {"rol": "Operativo", "alias": "MAYDELY", "mod": "Estándar (Con retención 25% Pub)", "porc": 20},
-        "Luis Violante": {"rol": "Operativo", "alias": "LUIS", "mod": "Estándar (Con retención 25% Pub)", "porc": 20},
-        "Jessica Lemus": {"rol": "Operativo", "alias": "JESSICA", "mod": "Porcentaje Directo (%)", "porc": 20},
-        "Mario de Paz": {"rol": "Operativo", "alias": "MARIO", "mod": "Estándar (Con retención 25% Pub)", "porc": 20},
-        "Dr. Gio Molina": {"rol": "Administrativo", "alias": "GIO|MARVIN|DOCTOR", "mod": "Fijo", "porc": 0},
-        "Gerson Ulises Molina Flores": {"rol": "Administrativo", "alias": "GERSON", "mod": "Fijo", "porc": 0},
-        "Edwin Ponce": {"rol": "Administrativo", "alias": "EDWIN", "mod": "Fijo", "porc": 0}
-    }
+    st.session_state["empleados"] = cargar_empleados()
 
 def calcular_bruto_acumulado(rol, quincenas=None):
-    # Calcula primero el neto total del período para asegurar exactitud matemática al 100%
     neto_quincenal = st.session_state["salario_operativo_neto"] if rol == "Operativo" else st.session_state["salario_directivo_neto"]
     mult = quincenas if quincenas is not None else st.session_state["quincenas_multiplicador"]
     neto_acumulado = neto_quincenal * mult
@@ -65,15 +82,18 @@ for emp, info in st.session_state["empleados"].items():
     if f"serv_tot_{emp}" not in st.session_state: st.session_state[f"serv_tot_{emp}"] = 0.0
     if f"hex_{emp}" not in st.session_state: st.session_state[f"hex_{emp}"] = 0.0
     if f"desc_{emp}" not in st.session_state: st.session_state[f"desc_{emp}"] = 0.0
-    if f"email_{emp}" not in st.session_state: st.session_state[f"email_{emp}"] = ""
-    if f"porc_{emp}" not in st.session_state: st.session_state[f"porc_{emp}"] = info["porc"]
+    
+    # Asegurar que existan las nuevas llaves en empleados antiguos
+    if "correo" not in info: info["correo"] = ""
+    if "dui" not in info: info["dui"] = ""
+    if "cuenta" not in info: info["cuenta"] = ""
 
-    mod_init = info["mod"]
+    mod_init = info.get("mod", "Fijo")
     if "Porcentaje" in mod_init:
         if f"base_{emp}" not in st.session_state: st.session_state[f"base_{emp}"] = 0.0
     else:
         if f"base_{emp}" not in st.session_state:
-            st.session_state[f"base_{emp}"] = calcular_bruto_acumulado(info["rol"])
+            st.session_state[f"base_{emp}"] = calcular_bruto_acumulado(info.get("rol", "Operativo"))
 
 if "historial_auditoria" not in st.session_state: st.session_state["historial_auditoria"] = []
 if "ingresos_por_marca" not in st.session_state: st.session_state["ingresos_por_marca"] = {}
@@ -153,16 +173,16 @@ if menu_seleccionado != "Configuración":
                 st.session_state["total_fondo_publicidad"] = 0.0
                 st.session_state["quincenas_multiplicador"] = 1.0
                 st.session_state["periodo_texto"] = "1 Quincena (Por defecto)"
-                st.session_state["detalle_extras"] = [] # Vaciamos el detalle informativo
+                st.session_state["detalle_extras"] = [] 
                 for emp, info in st.session_state["empleados"].items():
                     st.session_state[f"com_{emp}"] = 0.0
                     st.session_state[f"extra_bruto_{emp}"] = 0.0
                     st.session_state[f"ret_pub_{emp}"] = 0.0
                     st.session_state[f"serv_tot_{emp}"] = 0.0
-                    if "Porcentaje" in st.session_state.get(f"mod_{emp}", info["mod"]):
+                    if "Porcentaje" in st.session_state.get(f"mod_{emp}", info.get("mod", "")):
                         st.session_state[f"base_{emp}"] = 0.0
                     else:
-                        st.session_state[f"base_{emp}"] = calcular_bruto_acumulado(info["rol"], 1.0)
+                        st.session_state[f"base_{emp}"] = calcular_bruto_acumulado(info.get("rol", "Operativo"), 1.0)
                 st.rerun()
 
         if archivo_subido is not None:
@@ -216,7 +236,6 @@ if menu_seleccionado != "Configuración":
                     
                     col_prof = next((col for col in df_reporte.columns if 'PROFESIONAL' in col), None)
                     col_precio = next((col for col in df_reporte.columns if 'PRECIO' in col), None)
-                    # Extras informativos: Detectamos Cliente, Correlativo y Servicio
                     col_cliente = next((col for col in df_reporte.columns if 'CLIENTE' in col), None)
                     col_corr = next((col for col in df_reporte.columns if 'CORRELATIVO' in col), None)
                     col_serv = next((col for col in df_reporte.columns if 'SERVICIO' in col), None)
@@ -245,22 +264,22 @@ if menu_seleccionado != "Configuración":
                         st.session_state["extras_por_marca"] = df_reporte.groupby('MARCA')['EXTRA_BRUTO'].sum().to_dict()
 
                         st.session_state["total_fondo_publicidad"] = 0.0
-                        lista_detalles_extra = [] # Lista temporal para guardar el desglose
+                        lista_detalles_extra = []
 
                         for emp, info in st.session_state["empleados"].items():
-                            mod_actual = st.session_state.get(f"mod_{emp}", info["mod"])
+                            mod_actual = st.session_state.get(f"mod_{emp}", info.get("mod", "Fijo"))
                             if "Porcentaje" in mod_actual:
                                 st.session_state[f"base_{emp}"] = 0.0
                             else:
-                                st.session_state[f"base_{emp}"] = calcular_bruto_acumulado(info["rol"], st.session_state["quincenas_multiplicador"])
+                                st.session_state[f"base_{emp}"] = calcular_bruto_acumulado(info.get("rol", "Operativo"), st.session_state["quincenas_multiplicador"])
 
-                            df_p = df_reporte[df_reporte[col_prof].astype(str).str.contains(info["alias"], case=False, na=False, regex=True)]
+                            df_p = df_reporte[df_reporte[col_prof].astype(str).str.contains(info.get("alias", ""), case=False, na=False, regex=True)]
                             tot_serv = df_p[col_precio].sum()
                             st.session_state[f"serv_tot_{emp}"] = tot_serv
 
-                            if info["rol"] == "Operativo":
+                            if info.get("rol", "") == "Operativo":
                                 if "Estándar" in mod_actual:
-                                    df_ex = df_p[df_p[col_precio] > 60.0].copy() # Filtrar solo los que generan extra
+                                    df_ex = df_p[df_p[col_precio] > 60.0].copy()
                                     
                                     ext_bruto_total = 0.0
                                     desc_pub_total = 0.0
@@ -275,7 +294,6 @@ if menu_seleccionado != "Configuración":
                                             ext_bruto_total += extra_indiv
                                             desc_pub_total += ret_indiv
                                             
-                                            # Formateo de fecha para reporte
                                             c_corr = str(row_ex[col_corr]) if col_corr else "N/A"
                                             fecha_str = c_corr.split('-')[0] if '-' in c_corr else c_corr
                                             try:
@@ -286,7 +304,6 @@ if menu_seleccionado != "Configuración":
                                             except:
                                                 fecha_fmt = fecha_str
 
-                                            # Guardado en lista
                                             lista_detalles_extra.append({
                                                 "Colaborador": emp,
                                                 "Fecha": fecha_fmt,
@@ -305,7 +322,7 @@ if menu_seleccionado != "Configuración":
                                     st.session_state[f"ret_pub_{emp}"] = desc_pub_total
                                     st.session_state["total_fondo_publicidad"] += desc_pub_total
                                 else:
-                                    porc = st.session_state.get(f"porc_{emp}", info["porc"])
+                                    porc = st.session_state.get(f"porc_{emp}", info.get("porc", 20))
                                     st.session_state[f"extra_bruto_{emp}"] = 0.0
                                     st.session_state[f"com_{emp}"] = tot_serv * (porc / 100.0)
                                     st.session_state[f"ret_pub_{emp}"] = 0.0
@@ -331,7 +348,7 @@ if menu_seleccionado != "Configuración":
 if menu_seleccionado == "Dashboard":
     if st.session_state["total_ingresos_pdf"] > 0:
         costo_planilla = sum([
-            round(st.session_state[f"base_{emp}"] + st.session_state[f"com_{emp}"] + st.session_state[f"hex_{emp}"] - st.session_state[f"desc_{emp}"] - (0.0 if "Porcentaje" in st.session_state.get(f"mod_{emp}", st.session_state["empleados"][emp]["mod"]) and st.session_state["empleados"][emp]["rol"] == "Operativo" else round(st.session_state[f"base_{emp}"] * 0.10, 2)), 2)
+            round(st.session_state[f"base_{emp}"] + st.session_state[f"com_{emp}"] + st.session_state[f"hex_{emp}"] - st.session_state[f"desc_{emp}"] - (0.0 if "Porcentaje" in st.session_state.get(f"mod_{emp}", st.session_state["empleados"][emp].get("mod", "")) and st.session_state["empleados"][emp].get("rol", "") == "Operativo" else round(st.session_state[f"base_{emp}"] * 0.10, 2)), 2)
             for emp in st.session_state["empleados"].keys()
         ])
         utilidad_neta = st.session_state["total_ingresos_pdf"] - costo_planilla
@@ -354,7 +371,7 @@ if menu_seleccionado == "Dashboard":
         st.markdown("<br>", unsafe_allow_html=True)
 
         st.markdown("<h3 style='color:#0F172A;'>⭐ Rendimiento del Personal Activo</h3>", unsafe_allow_html=True)
-        datos_rendimiento = [{"Colaborador": e, "Rol": st.session_state["empleados"][e]["rol"], "Total Generado ($)": st.session_state.get(f"serv_tot_{e}", 0.0)} for e in st.session_state["empleados"]]
+        datos_rendimiento = [{"Colaborador": e, "Rol": st.session_state["empleados"][e].get("rol", ""), "Total Generado ($)": st.session_state.get(f"serv_tot_{e}", 0.0)} for e in st.session_state["empleados"]]
         st.dataframe(pd.DataFrame(datos_rendimiento).style.format({"Total Generado ($)": "${:,.2f}"}), use_container_width=True, hide_index=True)
 
         st.markdown("<br><h3 style='color:#0F172A;'>🎯 Rendimiento Neto de Marcas (Holding)</h3>", unsafe_allow_html=True)
@@ -380,7 +397,6 @@ if menu_seleccionado == "Dashboard":
 elif menu_seleccionado == "Planillas":
     st.markdown("<h2 style='color:#0F172A;'>Control Financiero de Planillas</h2>", unsafe_allow_html=True)
     
-    # NUEVO APARTADO: Desglose Informativo de Extras
     if st.session_state.get("detalle_extras"):
         with st.expander("🔍 Ver Desglose Informativo: Servicios con Extra Generado", expanded=False):
             st.info("Este apartado es informativo. Desglosa los servicios mayores a $60 para el personal Estándar.")
@@ -396,17 +412,17 @@ elif menu_seleccionado == "Planillas":
     datos_emp = []
 
     for emp, info in st.session_state["empleados"].items():
-        with st.expander(f"👤 {emp} ({info['rol']})", expanded=True if "Maydely" in emp else False):
+        with st.expander(f"👤 {emp} ({info.get('rol', '')})", expanded=True if "Maydely" in emp else False):
             c1, c2, c3 = st.columns([1.2, 1, 1])
 
             with c1:
-                if info["rol"] == "Operativo":
-                    mod = st.selectbox(f"Modalidad", ["Estándar (Con retención 25% Pub)", "Porcentaje Directo (%)"], index=0 if "Estándar" in st.session_state.get(f"mod_{emp}", info["mod"]) else 1, key=f"m_{emp}")
+                if info.get("rol", "") == "Operativo":
+                    mod = st.selectbox(f"Modalidad", ["Estándar (Con retención 25% Pub)", "Porcentaje Directo (%)"], index=0 if "Estándar" in st.session_state.get(f"mod_{emp}", info.get("mod", "")) else 1, key=f"m_{emp}")
                     if "Estándar" in mod:
                         st.session_state[f"mod_{emp}"] = "Estándar (Con retención 25% Pub)"
                     else:
                         st.session_state[f"mod_{emp}"] = "Porcentaje Directo (%)"
-                        porc = st.slider(f"% Ganancia", 0, 100, int(st.session_state.get(f"porc_{emp}", info["porc"])), key=f"p_{emp}")
+                        porc = st.slider(f"% Ganancia", 0, 100, int(st.session_state.get(f"porc_{emp}", info.get("porc", 20))), key=f"p_{emp}")
                         st.session_state[f"com_{emp}"] = st.session_state[f"serv_tot_{emp}"] * (porc / 100.0)
                         st.session_state[f"extra_bruto_{emp}"] = 0.0
                         st.session_state[f"ret_pub_{emp}"] = 0.0
@@ -414,8 +430,8 @@ elif menu_seleccionado == "Planillas":
                 else:
                     st.caption(f"Personal Administrativo (Sueldo Fijo)")
 
-                mod_actual = st.session_state.get(f"mod_{emp}", info["mod"])
-                if info["rol"] == "Operativo" and "Porcentaje" in mod_actual:
+                mod_actual = st.session_state.get(f"mod_{emp}", info.get("mod", ""))
+                if info.get("rol", "") == "Operativo" and "Porcentaje" in mod_actual:
                     st.session_state[f"base_{emp}"] = 0.0
                     st.write("Sueldo Base (Bruto): **$0.00** (Modalidad Porcentaje)")
                 else:
@@ -434,10 +450,12 @@ elif menu_seleccionado == "Planillas":
 
             with c3:
                 n_desc = st.text_input(f"Notas", value="Ninguno", key=f"n_{emp}")
-                e_em = st.text_input(f"Correo", value=st.session_state[f"email_{emp}"], key=f"ui_e_{emp}", placeholder="correo@ejemplo.com")
+                # El correo se precarga automáticamente desde la base de datos (info.get('correo'))
+                e_em = st.text_input(f"Correo", value=info.get("correo", ""), key=f"ui_e_{emp}", placeholder="correo@ejemplo.com")
+                # Si el usuario lo edita en la planilla, solo se cambia temporalmente para el envío
                 st.session_state[f"email_{emp}"] = e_em
 
-            if info["rol"] == "Operativo" and "Porcentaje" in mod_actual:
+            if info.get("rol", "") == "Operativo" and "Porcentaje" in mod_actual:
                 renta_calculada = 0.0
             else:
                 renta_calculada = round(st.session_state[f"base_{emp}"] * 0.10, 2)
@@ -458,13 +476,17 @@ elif menu_seleccionado == "Planillas":
                 "10% Renta": renta_calculada,
                 "Total a Pagar": t_net,
                 "Notas": n_desc,
-                "Email": st.session_state[f"email_{emp}"]
+                "Email": st.session_state[f"email_{emp}"],
+                "DUI": info.get("dui", ""),
+                "Cuenta": info.get("cuenta", "")
             })
 
     if datos_emp:
         df_res = pd.DataFrame(datos_emp)
         st.markdown("<br><h4>Resumen Consolidado</h4>", unsafe_allow_html=True)
-        st.dataframe(df_res.style.format({
+        # Ocultamos notas, email, dui y cuenta de la previsualización principal para no saturar
+        df_display = df_res.drop(columns=["Notas", "Email", "DUI", "Cuenta"])
+        st.dataframe(df_display.style.format({
             "Sueldo Base (Bruto)": "${:.2f}",
             "Extra Bruto": "${:,.2f}",
             "Retención Pub (25%)": "${:.2f}",
@@ -498,6 +520,12 @@ elif menu_seleccionado == "Planillas":
 
             pdf = PDF(); pdf.add_page(); pdf.set_font('helvetica', 'B', 11); pdf.set_fill_color(243, 244, 246)
             pdf.cell(0, 10, limpiar_texto_pdf(f" Colaborador: {e_dat['Colaborador']}"), 0, 1, 'L', fill=True); pdf.ln(5)
+            
+            # Incorporación del DUI y Cuenta en el PDF si existen en la BD
+            pdf.set_font('helvetica', '', 9); pdf.set_text_color(80, 80, 80)
+            txt_banco = f"DUI: {e_dat['DUI']} | Cuenta a Depositar: {e_dat['Cuenta']}" if e_dat['DUI'] or e_dat['Cuenta'] else "Datos bancarios no registrados"
+            pdf.cell(0, 5, limpiar_texto_pdf(txt_banco), 0, 1, 'L'); pdf.ln(3)
+
             pdf.set_fill_color(10, 25, 47); pdf.set_text_color(255, 255, 255)
             pdf.cell(130, 8, ' Concepto', 1, 0, 'L', fill=True); pdf.cell(60, 8, ' Monto ($)', 1, 1, 'R', fill=True)
             pdf.set_font('helvetica', '', 10); pdf.set_text_color(50, 50, 50)
@@ -537,7 +565,7 @@ elif menu_seleccionado == "Planillas":
 
             correo_destino_valido = bool(e_dat["Email"]) and "@" in e_dat["Email"]
             if not correo_destino_valido:
-                st.warning("⚠️ Este colaborador no tiene un correo válido configurado. Ingresa uno arriba antes de enviarlo.")
+                st.warning("⚠️ Este colaborador no tiene un correo válido configurado. Edítalo en la sección 'Configuración' o ingresa uno arriba temporalmente.")
 
             if st.button("🚀 Enviar Recibo por Gmail al Colaborador", disabled=not correo_destino_valido):
                 try:
@@ -647,8 +675,35 @@ elif menu_seleccionado == "Auditoría":
 
 elif menu_seleccionado == "Configuración":
     st.markdown("<h2 style='color:#0F172A;'>⚙️ Configuración del Sistema (Admin)</h2>", unsafe_allow_html=True)
+    
+    # NUEVO: Panel de Base de Datos de Empleados
+    st.markdown("### 📇 Base de Datos del Personal (Cuentas, DUI, Correos)")
+    st.info("Edita directamente los datos en la tabla y presiona el botón de guardar para mantenerlos permanentemente.")
+    
+    # Convertimos el diccionario a un DataFrame para editarlo fácilmente
+    df_emp_db = pd.DataFrame.from_dict(st.session_state["empleados"], orient="index")
+    # Mostramos el editor (bloqueando alias, rol y mod para que no rompan la app por error, solo permitiendo editar los datos nuevos)
+    df_edited = st.data_editor(
+        df_emp_db, 
+        use_container_width=True, 
+        disabled=["rol", "alias", "mod", "porc"],
+        column_config={
+            "correo": st.column_config.TextColumn("Correo Electrónico"),
+            "dui": st.column_config.TextColumn("DUI"),
+            "cuenta": st.column_config.TextColumn("Cuenta Bancaria")
+        }
+    )
+    
+    if st.button("💾 Guardar Cambios en Base de Datos"):
+        # Guardamos en session state
+        st.session_state["empleados"] = df_edited.to_dict(orient="index")
+        # Guardamos permanentemente en el archivo JSON
+        guardar_empleados(st.session_state["empleados"])
+        st.success("¡Base de datos actualizada y guardada con éxito! Los datos aparecerán automáticamente en las planillas.")
 
-    st.markdown("### 💰 1. Sueldos Netos (Por Quincena)")
+    st.markdown("---")
+
+    st.markdown("### 💰 Sueldos Netos (Por Quincena)")
     st.info("Ingresa los sueldos netos quincenales. El sistema calculará automáticamente la retención mensual o quincenal según el PDF.")
     col_s1, col_s2 = st.columns(2)
     with col_s1:
@@ -657,7 +712,7 @@ elif menu_seleccionado == "Configuración":
         st.session_state["salario_directivo_neto"] = st.number_input("Sueldo Quincenal NETO Administrativo:", value=float(st.session_state["salario_directivo_neto"]), step=10.0)
 
     st.markdown("---")
-    st.markdown("### 📅 2. Ajuste Manual de Período")
+    st.markdown("### 📅 Ajuste Manual de Período")
     c_t1, c_t2 = st.columns(2)
     with c_t1: st.text_input("Periodo Detectado Actual:", value=st.session_state["periodo_texto"], disabled=True)
     with c_t2:
@@ -665,13 +720,13 @@ elif menu_seleccionado == "Configuración":
         if st.button("Aplicar Multiplicador Manual"):
             st.session_state["quincenas_multiplicador"] = float(meses_manual)
             for emp, info in st.session_state["empleados"].items():
-                if not "Porcentaje" in info["mod"]:
-                    st.session_state[f"base_{emp}"] = calcular_bruto_acumulado(info["rol"])
+                if not "Porcentaje" in info.get("mod", ""):
+                    st.session_state[f"base_{emp}"] = calcular_bruto_acumulado(info.get("rol", ""))
             st.success("Multiplicador manual aplicado.")
             st.rerun()
 
     st.markdown("---")
-    st.markdown("### 👥 3. Gestión de Personal (Altas y Bajas)")
+    st.markdown("### 👥 Gestión de Personal (Altas y Bajas)")
     col_p1, col_p2 = st.columns([1, 1])
     with col_p1:
         st.markdown("#### ✨ Alta de Colaborador")
@@ -680,35 +735,50 @@ elif menu_seleccionado == "Configuración":
         n_mod = st.selectbox("Modalidad:", ["Estándar (Con retención 25% Pub)", "Porcentaje Directo (%)"])
         n_porc = st.number_input("Porcentaje (%) si aplica:", value=20)
         n_alias = st.text_input("Alias PDF (Ej. MARIA):")
+        
+        # Añadir de una vez los nuevos datos al registrar
+        n_correo = st.text_input("Correo Electrónico (Opcional):")
+        n_dui = st.text_input("DUI (Opcional):")
+        n_cuenta = st.text_input("Cuenta Bancaria (Opcional):")
+
         if st.button("➕ Registrar"):
             if n_nombre and n_alias:
                 if n_nombre in st.session_state["empleados"]:
                     st.error(f"Ya existe un colaborador registrado como '{n_nombre}'.")
                 else:
-                    st.session_state["empleados"][n_nombre] = {"rol": n_rol, "alias": n_alias.upper(), "mod": n_mod, "porc": n_porc}
+                    st.session_state["empleados"][n_nombre] = {
+                        "rol": n_rol, 
+                        "alias": n_alias.upper(), 
+                        "mod": n_mod, 
+                        "porc": n_porc,
+                        "correo": n_correo,
+                        "dui": n_dui,
+                        "cuenta": n_cuenta
+                    }
                     st.session_state[f"com_{n_nombre}"] = 0.0
                     st.session_state[f"extra_bruto_{n_nombre}"] = 0.0
                     st.session_state[f"ret_pub_{n_nombre}"] = 0.0
                     st.session_state[f"serv_tot_{n_nombre}"] = 0.0
-                    st.session_state[f"email_{n_nombre}"] = ""
+                    st.session_state[f"email_{n_nombre}"] = n_correo
                     st.session_state[f"hex_{n_nombre}"] = 0.0
                     st.session_state[f"desc_{n_nombre}"] = 0.0
-                    st.session_state[f"porc_{n_nombre}"] = n_porc
                     if "Porcentaje" in n_mod:
                         st.session_state[f"base_{n_nombre}"] = 0.0
                     else:
                         st.session_state[f"base_{n_nombre}"] = calcular_bruto_acumulado(n_rol)
-                    st.success(f"{n_nombre} guardado exitosamente.")
+                    
+                    # Guardamos la base de datos automáticamente al agregar a alguien
+                    guardar_empleados(st.session_state["empleados"])
+                    st.success(f"{n_nombre} guardado exitosamente en la base de datos.")
                     st.rerun()
             else:
-                st.info("Ingresa nombre completo y alias antes de registrar.")
+                st.info("Ingresa al menos el nombre completo y el alias en PDF antes de registrar.")
 
     with col_p2:
         st.markdown("#### 🗑️ Dar de Baja a Colaborador")
         e_elim = st.selectbox("Seleccionar colaborador:", list(st.session_state["empleados"].keys()))
-        if st.button("❌ Eliminar"):
+        if st.button("❌ Eliminar Permanentemente"):
             del st.session_state["empleados"][e_elim]
-            st.warning("Colaborador eliminado.")
+            guardar_empleados(st.session_state["empleados"]) # Actualizamos archivo
+            st.warning("Colaborador eliminado de la base de datos.")
             st.rerun()
-
-    st.dataframe(pd.DataFrame([{"Nombre": k, "Rol": v["rol"], "Modalidad": v["mod"], "Alias": v["alias"]} for k,v in st.session_state["empleados"].items()]), use_container_width=True)
