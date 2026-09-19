@@ -3,7 +3,6 @@ import pandas as pd
 import io
 import os
 import re
-import json
 from datetime import datetime
 import pdfplumber
 import smtplib
@@ -14,8 +13,10 @@ from fpdf import FPDF
 import base64
 from PIL import Image
 from streamlit_option_menu import option_menu
+import gspread
+from google.oauth2.service_account import Credentials
 
-# --- 0. UTILIDADES DE SEGURIDAD Y BASE DE DATOS ---
+# --- 0. UTILIDADES DE SEGURIDAD Y GOOGLE SHEETS ---
 def limpiar_texto_pdf(txt):
     if txt is None: return ""
     return str(txt).encode('latin-1', 'replace').decode('latin-1')
@@ -23,17 +24,45 @@ def limpiar_texto_pdf(txt):
 def generar_pdf_bytes(pdf_obj):
     return bytes(pdf_obj.output())
 
-# Archivo de base de datos local
-DB_FILE = "empleados_db.json"
+@st.cache_resource
+def conectar_gsheets():
+    try:
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+        skey = dict(st.secrets["gcp_service_account"])
+        credentials = Credentials.from_service_account_info(skey, scopes=scopes)
+        gc = gspread.authorize(credentials)
+        sheet_url = st.secrets["gsheets"]["url"]
+        return gc.open_by_url(sheet_url).sheet1
+    except Exception:
+        return None
 
 def cargar_empleados():
-    if os.path.exists(DB_FILE):
+    worksheet = conectar_gsheets()
+    if worksheet:
         try:
-            with open(DB_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except:
+            records = worksheet.get_all_records()
+            if records:
+                emp_dict = {}
+                for r in records:
+                    nombre = r.get("Nombre")
+                    if nombre:
+                        emp_dict[nombre] = {
+                            "rol": str(r.get("Rol", "Operativo")),
+                            "alias": str(r.get("Alias", "")),
+                            "mod": str(r.get("Modalidad", "Fijo")),
+                            "porc": float(r.get("Porcentaje", 0)),
+                            "correo": str(r.get("Correo", "")),
+                            "dui": str(r.get("DUI", "")),
+                            "cuenta": str(r.get("Cuenta", ""))
+                        }
+                return emp_dict
+        except Exception:
             pass
-    # Base por defecto si no existe el archivo
+
+    # Base de datos por defecto si falla Google Sheets o no está configurado
     return {
         "Maydely Hernández": {"rol": "Operativo", "alias": "MAYDELY", "mod": "Estándar (Con retención 25% Pub)", "porc": 20, "correo": "", "dui": "", "cuenta": ""},
         "Luis Violante": {"rol": "Operativo", "alias": "LUIS", "mod": "Estándar (Con retención 25% Pub)", "porc": 20, "correo": "", "dui": "", "cuenta": ""},
@@ -45,8 +74,22 @@ def cargar_empleados():
     }
 
 def guardar_empleados(datos):
-    with open(DB_FILE, "w", encoding="utf-8") as f:
-        json.dump(datos, f, indent=4, ensure_ascii=False)
+    worksheet = conectar_gsheets()
+    if worksheet:
+        filas = [["Nombre", "Rol", "Alias", "Modalidad", "Porcentaje", "Correo", "DUI", "Cuenta"]]
+        for nombre, info in datos.items():
+            filas.append([
+                nombre, info.get("rol", ""), info.get("alias", ""), info.get("mod", ""), 
+                info.get("porc", 0), info.get("correo", ""), info.get("dui", ""), info.get("cuenta", "")
+            ])
+        try:
+            worksheet.clear()
+            try:
+                worksheet.update(values=filas, range_name="A1")
+            except TypeError:
+                worksheet.update("A1", filas)
+        except Exception:
+            pass
 
 # --- 1. CONFIGURACIÓN DE PÁGINA ---
 logo_path = os.path.join(os.path.dirname(__file__), "logo.png")
@@ -59,12 +102,12 @@ try:
 except Exception:
     st.set_page_config(page_title="Gio Group Admin", page_icon="🏢", layout="wide")
 
-# --- 2. BASE DE DATOS EN MEMORIA ---
-if "salario_operativo_neto" not in st.session_state: st.session_state["salario_operativo_neto"] = 183.96
-if "salario_directivo_neto" not in st.session_state: st.session_state["salario_directivo_neto"] = 300.00
+# --- 2. ESTADO DE MEMORIA ---
+if "salario_operativo_neto" not in st.session_state: st.session_state["salario_operativo_neto"] = 183.96 
+if "salario_directivo_neto" not in st.session_state: st.session_state["salario_directivo_neto"] = 300.00 
 if "quincenas_multiplicador" not in st.session_state: st.session_state["quincenas_multiplicador"] = 1.0
 if "periodo_texto" not in st.session_state: st.session_state["periodo_texto"] = "1 Quincena (Por defecto)"
-if "detalle_extras" not in st.session_state: st.session_state["detalle_extras"] = []
+if "detalle_extras" not in st.session_state: st.session_state["detalle_extras"] = [] 
 
 if "empleados" not in st.session_state:
     st.session_state["empleados"] = cargar_empleados()
@@ -82,12 +125,8 @@ for emp, info in st.session_state["empleados"].items():
     if f"serv_tot_{emp}" not in st.session_state: st.session_state[f"serv_tot_{emp}"] = 0.0
     if f"hex_{emp}" not in st.session_state: st.session_state[f"hex_{emp}"] = 0.0
     if f"desc_{emp}" not in st.session_state: st.session_state[f"desc_{emp}"] = 0.0
+    if f"email_{emp}" not in st.session_state: st.session_state[f"email_{emp}"] = info.get("correo", "")
     
-    # Asegurar que existan las nuevas llaves en empleados antiguos
-    if "correo" not in info: info["correo"] = ""
-    if "dui" not in info: info["dui"] = ""
-    if "cuenta" not in info: info["cuenta"] = ""
-
     mod_init = info.get("mod", "Fijo")
     if "Porcentaje" in mod_init:
         if f"base_{emp}" not in st.session_state: st.session_state[f"base_{emp}"] = 0.0
@@ -280,7 +319,6 @@ if menu_seleccionado != "Configuración":
                             if info.get("rol", "") == "Operativo":
                                 if "Estándar" in mod_actual:
                                     df_ex = df_p[df_p[col_precio] > 60.0].copy()
-                                    
                                     ext_bruto_total = 0.0
                                     desc_pub_total = 0.0
                                     
@@ -450,9 +488,7 @@ elif menu_seleccionado == "Planillas":
 
             with c3:
                 n_desc = st.text_input(f"Notas", value="Ninguno", key=f"n_{emp}")
-                # El correo se precarga automáticamente desde la base de datos (info.get('correo'))
                 e_em = st.text_input(f"Correo", value=info.get("correo", ""), key=f"ui_e_{emp}", placeholder="correo@ejemplo.com")
-                # Si el usuario lo edita en la planilla, solo se cambia temporalmente para el envío
                 st.session_state[f"email_{emp}"] = e_em
 
             if info.get("rol", "") == "Operativo" and "Porcentaje" in mod_actual:
@@ -484,7 +520,6 @@ elif menu_seleccionado == "Planillas":
     if datos_emp:
         df_res = pd.DataFrame(datos_emp)
         st.markdown("<br><h4>Resumen Consolidado</h4>", unsafe_allow_html=True)
-        # Ocultamos notas, email, dui y cuenta de la previsualización principal para no saturar
         df_display = df_res.drop(columns=["Notas", "Email", "DUI", "Cuenta"])
         st.dataframe(df_display.style.format({
             "Sueldo Base (Bruto)": "${:.2f}",
@@ -521,7 +556,6 @@ elif menu_seleccionado == "Planillas":
             pdf = PDF(); pdf.add_page(); pdf.set_font('helvetica', 'B', 11); pdf.set_fill_color(243, 244, 246)
             pdf.cell(0, 10, limpiar_texto_pdf(f" Colaborador: {e_dat['Colaborador']}"), 0, 1, 'L', fill=True); pdf.ln(5)
             
-            # Incorporación del DUI y Cuenta en el PDF si existen en la BD
             pdf.set_font('helvetica', '', 9); pdf.set_text_color(80, 80, 80)
             txt_banco = f"DUI: {e_dat['DUI']} | Cuenta a Depositar: {e_dat['Cuenta']}" if e_dat['DUI'] or e_dat['Cuenta'] else "Datos bancarios no registrados"
             pdf.cell(0, 5, limpiar_texto_pdf(txt_banco), 0, 1, 'L'); pdf.ln(3)
@@ -565,7 +599,7 @@ elif menu_seleccionado == "Planillas":
 
             correo_destino_valido = bool(e_dat["Email"]) and "@" in e_dat["Email"]
             if not correo_destino_valido:
-                st.warning("⚠️ Este colaborador no tiene un correo válido configurado. Edítalo en la sección 'Configuración' o ingresa uno arriba temporalmente.")
+                st.warning("⚠️ Este colaborador no tiene un correo válido configurado. Edítalo en 'Configuración' o ingresa uno temporalmente.")
 
             if st.button("🚀 Enviar Recibo por Gmail al Colaborador", disabled=not correo_destino_valido):
                 try:
@@ -676,13 +710,17 @@ elif menu_seleccionado == "Auditoría":
 elif menu_seleccionado == "Configuración":
     st.markdown("<h2 style='color:#0F172A;'>⚙️ Configuración del Sistema (Admin)</h2>", unsafe_allow_html=True)
     
-    # NUEVO: Panel de Base de Datos de Empleados
-    st.markdown("### 📇 Base de Datos del Personal (Cuentas, DUI, Correos)")
-    st.info("Edita directamente los datos en la tabla y presiona el botón de guardar para mantenerlos permanentemente.")
+    st.markdown("### 📇 Base de Datos del Personal (Sincronizada con Google Sheets)")
     
-    # Convertimos el diccionario a un DataFrame para editarlo fácilmente
+    # Revisión de estado de conexión a Google Cloud
+    try:
+        _ = st.secrets["gcp_service_account"]
+        _ = st.secrets["gsheets"]["url"]
+        st.success("✅ Sistema conectado exitosamente a Google Sheets.")
+    except Exception:
+        st.warning("⚠️ **MODO LOCAL ACTIVADO:** No se han detectado credenciales de Google Cloud. Puedes usar el sistema hoy, pero los datos de esta tabla se perderán al reiniciar el servidor. Sigue las instrucciones de Google Cloud para hacerlos permanentes.")
+    
     df_emp_db = pd.DataFrame.from_dict(st.session_state["empleados"], orient="index")
-    # Mostramos el editor (bloqueando alias, rol y mod para que no rompan la app por error, solo permitiendo editar los datos nuevos)
     df_edited = st.data_editor(
         df_emp_db, 
         use_container_width=True, 
@@ -695,16 +733,13 @@ elif menu_seleccionado == "Configuración":
     )
     
     if st.button("💾 Guardar Cambios en Base de Datos"):
-        # Guardamos en session state
         st.session_state["empleados"] = df_edited.to_dict(orient="index")
-        # Guardamos permanentemente en el archivo JSON
         guardar_empleados(st.session_state["empleados"])
-        st.success("¡Base de datos actualizada y guardada con éxito! Los datos aparecerán automáticamente en las planillas.")
+        st.success("¡Base de datos actualizada! Los datos aparecerán automáticamente en las planillas.")
 
     st.markdown("---")
 
     st.markdown("### 💰 Sueldos Netos (Por Quincena)")
-    st.info("Ingresa los sueldos netos quincenales. El sistema calculará automáticamente la retención mensual o quincenal según el PDF.")
     col_s1, col_s2 = st.columns(2)
     with col_s1:
         st.session_state["salario_operativo_neto"] = st.number_input("Sueldo Quincenal NETO Operativo:", value=float(st.session_state["salario_operativo_neto"]), step=10.0)
@@ -736,7 +771,6 @@ elif menu_seleccionado == "Configuración":
         n_porc = st.number_input("Porcentaje (%) si aplica:", value=20)
         n_alias = st.text_input("Alias PDF (Ej. MARIA):")
         
-        # Añadir de una vez los nuevos datos al registrar
         n_correo = st.text_input("Correo Electrónico (Opcional):")
         n_dui = st.text_input("DUI (Opcional):")
         n_cuenta = st.text_input("Cuenta Bancaria (Opcional):")
@@ -747,13 +781,8 @@ elif menu_seleccionado == "Configuración":
                     st.error(f"Ya existe un colaborador registrado como '{n_nombre}'.")
                 else:
                     st.session_state["empleados"][n_nombre] = {
-                        "rol": n_rol, 
-                        "alias": n_alias.upper(), 
-                        "mod": n_mod, 
-                        "porc": n_porc,
-                        "correo": n_correo,
-                        "dui": n_dui,
-                        "cuenta": n_cuenta
+                        "rol": n_rol, "alias": n_alias.upper(), "mod": n_mod, "porc": n_porc,
+                        "correo": n_correo, "dui": n_dui, "cuenta": n_cuenta
                     }
                     st.session_state[f"com_{n_nombre}"] = 0.0
                     st.session_state[f"extra_bruto_{n_nombre}"] = 0.0
@@ -767,7 +796,6 @@ elif menu_seleccionado == "Configuración":
                     else:
                         st.session_state[f"base_{n_nombre}"] = calcular_bruto_acumulado(n_rol)
                     
-                    # Guardamos la base de datos automáticamente al agregar a alguien
                     guardar_empleados(st.session_state["empleados"])
                     st.success(f"{n_nombre} guardado exitosamente en la base de datos.")
                     st.rerun()
@@ -779,6 +807,6 @@ elif menu_seleccionado == "Configuración":
         e_elim = st.selectbox("Seleccionar colaborador:", list(st.session_state["empleados"].keys()))
         if st.button("❌ Eliminar Permanentemente"):
             del st.session_state["empleados"][e_elim]
-            guardar_empleados(st.session_state["empleados"]) # Actualizamos archivo
+            guardar_empleados(st.session_state["empleados"])
             st.warning("Colaborador eliminado de la base de datos.")
             st.rerun()
