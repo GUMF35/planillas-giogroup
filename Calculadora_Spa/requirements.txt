@@ -5,3 +5,5 @@ fpdf2
 Pillow
 streamlit-option-menu
 openpyxl
+gspread
+google-auth
