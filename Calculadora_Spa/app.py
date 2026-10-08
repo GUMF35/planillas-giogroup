@@ -1,5 +1,6 @@
 # =====================================================================
-# GIO GROUP · Suite Administrativa (Planillas, Panel, Proveedores y Documentos)
+# GIO GROUP · Suite Administrativa
+# Planillas · E-commerce · Panel · Proveedores · Documentos · Configuración
 # =====================================================================
 import base64
 import calendar
@@ -37,6 +38,12 @@ MOD_ESTANDAR = "Estándar (Con retención 25% Pub)"
 MOD_PORCENTAJE = "Porcentaje Directo (%)"
 MOD_FIJO = "Fijo"
 MODALIDADES = [MOD_ESTANDAR, MOD_PORCENTAJE, MOD_FIJO]
+MOD_ETIQUETAS = {MOD_ESTANDAR: "💵 Sueldo base + extras", MOD_PORCENTAJE: "📈 Porcentaje de ventas", MOD_FIJO: "🔒 Sueldo fijo"}
+MOD_AYUDA = {
+    MOD_ESTANDAR: "Recibe su sueldo base y, por cada servicio mayor al precio mínimo, el excedente menos la retención de pauta.",
+    MOD_PORCENTAJE: "No tiene sueldo base ni renta: gana el porcentaje que definas (de 1% a 100%) sobre todo lo que vende.",
+    MOD_FIJO: "Solo recibe su sueldo base (ideal para administración). A un operativo se le puede sumar una comisión opcional.",
+}
 ROLES = ["Operativo", "Administrativo"]
 
 # Salario mínimo de comercio y servicios (Decreto Ejecutivo N.° 11, Diario Oficial del 23/05/2025)
@@ -54,6 +61,7 @@ AJUSTES_POR_DEFECTO = {
     "umbral_extra": 60.0,
     "retencion_pub_pct": 25.0,
     "renta_pct": 10.0,
+    "logo_b64": "",
 }
 AJUSTES_NUMERICOS = ("salario_minimo", "umbral_extra", "retencion_pub_pct", "renta_pct")
 REGLAS_OFICIALES = {"umbral_extra": 60.0, "retencion_pub_pct": 25.0, "renta_pct": 10.0}
@@ -69,11 +77,12 @@ TEMAS = {
 }
 
 MENU = [
-    ("Principal", [("Planillas", "💼", "Planillas"), ("Dashboard", "📊", "Panel general")]),
+    ("Principal", [("Planillas", "💼", "Planillas"), ("Ecommerce", "🏪", "E-commerce"), ("Dashboard", "📊", "Panel general")]),
     ("Gestión", [("Proveedores", "📇", "Proveedores"), ("Memorándums", "📝", "Memorándums"), ("Amonestaciones", "⚠️", "Amonestaciones")]),
-    ("Sistema", [("Auditoría", "🗂️", "Auditoría"), ("Configuración", "⚙️", "Configuración")]),
+    ("Sistema", [("Auditoría", "🗂️", "Historial"), ("Configuración", "⚙️", "Configuración")]),
 ]
 PAGINAS_VALIDAS = [p for _, items in MENU for p, _, _ in items]
+ETIQUETAS_PAGINA = {p: f"{icono} {etiqueta}" for _, items in MENU for p, icono, etiqueta in items}
 
 DIAS = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
 MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
@@ -88,6 +97,9 @@ CLAVES_SERVICIO = ("SERVICIO", "TRATAMIENTO", "PROCEDIMIENTO", "PRODUCTO", "DESC
 CLAVES_FECHA = ("FECHA",)
 CLAVES_MARCA = ("ECOMER", "E-COMER", "E COMER", "COMERCIO", "MARCA", "SUCURSAL", "NEGOCIO", "UNIDAD")
 CLAVES_CORRELATIVO = ("CORRELATIVO", "FOLIO", "TICKET", "FACTURA", "CODIGO")
+CLAVES_EFECTIVO = ("EFECTIVO", "CONTADO", "CASH")
+CLAVES_TRANSFER = ("TRANSFER", "DEPOSITO")
+CLAVES_POS = ("POS", "TARJETA")
 PATRON_TOTAL = re.compile(r"^(SUB\s*-?\s*TOTAL|GRAN\s+TOTAL|TOTALES|TOTAL|SUMA)\b")
 PATRON_FIN_TABLA = re.compile(r"^(TOTALES|GRAN\s+TOTAL|TOTAL\s+GENERAL|RESUMEN|REGISTRO\s+DE)")
 PATRON_FECHA = r"(20\d{2}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]20\d{2})"
@@ -100,11 +112,15 @@ CLAVES_MAPEO = ("map_prof", "map_precio", "map_cliente", "map_servicio", "map_ma
 
 ORDEN_MARCAS = ["Papi Spa", "Relájate Man", "Dr. Gio Molina", "Relájate Clinic"]
 COLORES_MARCA = {"Papi Spa": "#2a78d6", "Relájate Man": "#eb6834", "Dr. Gio Molina": "#1baf7a", "Relájate Clinic": "#eda100"}
+COLORES_PAGO = {"Efectivo": "#0D9488", "Transferencia": "#7C3AED", "POS": "#E11D48"}
 PLOTLY_CONFIG = {"displayModeBar": False, "responsive": True}
 
 NUEVO_EMP = "➕ Nuevo colaborador"
 MODO_NETO_Q = "Neto quincenal"
 MODO_BRUTO_M = "Bruto mensual"
+
+ENCABEZADOS_HISTORIAL = ["Guardado", "Periodo", "Desde", "Hasta", "Quincenas", "Colaborador", "Forma_Pago", "Servicios",
+                         "Ventas", "Sueldo_Neto", "Comision", "Bonos", "Descuentos", "Renta", "Total"]
 
 
 # =====================================================================
@@ -133,6 +149,15 @@ def _esc(v):
 def _normalizar(v):
     t = unicodedata.normalize("NFKD", _texto(v)).encode("ascii", "ignore").decode("ascii")
     return re.sub(r"\s+", " ", t).strip().upper()
+
+
+def _clave_nombre(v):
+    """'MARVIN\\nMOLINA', 'Marvin Molina' y 'MARVINMOLINA' → 'MARVINMOLINA' (para comparar nombres)."""
+    return re.sub(r"[^A-Z0-9]", "", _normalizar(v))
+
+
+def nombre_bonito(v):
+    return re.sub(r"\s+", " ", _texto(v)).title()
 
 
 def _a_numero(v):
@@ -184,7 +209,7 @@ def _a_porcentaje(v, defecto=0.0):
 
 def normalizar_modalidad(v):
     n = _normalizar(v)
-    if "ESTANDAR" in n or "RETENCION" in n:
+    if "ESTANDAR" in n or "RETENCION" in n or "EXTRAS" in n:
         return MOD_ESTANDAR
     if "PORCENTAJE" in n or "%" in n or "COMISION" in n:
         return MOD_PORCENTAJE
@@ -202,6 +227,18 @@ def normalizar_rol(v):
 
 def modalidad_corta(mod):
     return "Estándar" if "Estándar" in mod else "Porcentaje" if "Porcentaje" in mod else "Fijo"
+
+
+def forma_pago_texto(info):
+    mod = info.get("mod", MOD_FIJO)
+    porc = float(_a_numero(info.get("porc")) or 0.0)
+    if "Porcentaje" in mod:
+        return f"{porc:g}% de ventas"
+    if "Estándar" in mod:
+        return "Sueldo + extras"
+    if info.get("rol") == "Operativo" and porc > 0:
+        return f"Sueldo fijo + {porc:g}%"
+    return "Sueldo fijo"
 
 
 def alias_efectivo(nombre, info):
@@ -313,6 +350,26 @@ def ancho(fn):
     return {"width": "stretch"} if _api_width_nueva(fn) else {"use_container_width": True}
 
 
+def columnas(spec, alinear=None):
+    """st.columns con alineación vertical (evita espacios fijos que se desacomodan en el teléfono)."""
+    if alinear:
+        try:
+            return st.columns(spec, vertical_alignment=alinear)
+        except TypeError:
+            pass
+    return st.columns(spec)
+
+
+def secreto(*ruta):
+    try:
+        valor = st.secrets
+        for parte in ruta:
+            valor = valor[parte]
+        return valor
+    except Exception:
+        return None
+
+
 # =====================================================================
 # 2. GOOGLE SHEETS
 # =====================================================================
@@ -330,6 +387,14 @@ def _documento():
         return _abrir_documento()
     except Exception:
         return None
+
+
+def error_conexion():
+    try:
+        _abrir_documento()
+        return ""
+    except Exception as ex:
+        return f"{type(ex).__name__}: {ex}"
 
 
 def conectar_gsheets(nombre_hoja="Personal", crear=False):
@@ -421,9 +486,10 @@ def _empleado_normalizado(info):
     mod = normalizar_modalidad(info.get("mod", "Fijo"))
     rol = normalizar_rol(info.get("rol", "Operativo"))
     sueldo = _a_numero(info.get("sueldo_base_neto"))
+    porc = _a_porcentaje(info.get("porc", 0), 20.0 if mod == MOD_PORCENTAJE else 0.0)
     limpio = {
         "rol": rol, "alias": _texto(info.get("alias")), "mod": mod,
-        "porc": _a_porcentaje(info.get("porc", 0), 20.0 if mod == MOD_PORCENTAJE else 0.0),
+        "porc": min(max(porc, 0.0), 100.0),
         "sueldo_base_neto": sueldo if sueldo is not None else sueldo_neto_por_defecto(rol),
     }
     for campo in CAMPOS_EXTRA_EMPLEADO:
@@ -558,15 +624,85 @@ def _auditoria_a_sheets(registro):
         pass
 
 
+def cargar_historial_planillas():
+    """Planillas guardadas en la hoja 'Historial_Planillas'. None si no hay conexión."""
+    worksheet = conectar_gsheets("Historial_Planillas")
+    if worksheet is None:
+        return None
+    try:
+        if not worksheet.row_values(1):
+            return []
+        return _leer_registros(worksheet)
+    except Exception:
+        return None
+
+
+def guardar_historial_planilla(filas_nuevas, periodo):
+    """Guarda la planilla del período (si el período ya existía, se reemplaza para no duplicar)."""
+    worksheet = conectar_gsheets("Historial_Planillas", crear=True)
+    if worksheet is None:
+        return False
+    try:
+        existentes = _leer_registros(worksheet) if worksheet.row_values(1) else []
+        conservar = [r for r in existentes if _texto(r.get("Periodo")) != periodo]
+        filas = [ENCABEZADOS_HISTORIAL]
+        filas += [[_valor_para_sheets(r.get(c, "")) for c in ENCABEZADOS_HISTORIAL] for r in conservar]
+        filas += [[_valor_para_sheets(f.get(c, "")) for c in ENCABEZADOS_HISTORIAL] for f in filas_nuevas]
+        worksheet.clear()
+        worksheet.update(values=filas, range_name="A1")
+        return True
+    except Exception:
+        return False
+
+
+def preparar_hoja_calculo():
+    """Crea (o actualiza) todas las pestañas que usa la app con sus encabezados."""
+    ss = st.session_state
+    doc = _documento()
+    if doc is None:
+        return None
+    try:
+        doc.worksheet("Personal")
+    except gspread.exceptions.WorksheetNotFound:
+        try:
+            primera = doc.sheet1
+            if not primera.row_values(1):
+                primera.update_title("Personal")
+            else:
+                doc.add_worksheet(title="Personal", rows=200, cols=20)
+        except Exception:
+            pass
+    except Exception:
+        pass
+    resultados = {
+        "Personal": guardar_empleados(ss["empleados"]),
+        "Proveedores": guardar_proveedores(ss["proveedores"], encabezados_si_vacio=CAMPOS_PROVEEDOR),
+        "Ajustes": guardar_ajustes(ss["ajustes"]),
+    }
+    for hoja, encabezados in (("Auditoria", ["Fecha", "Tipo Documento", "Destinatario"]), ("Historial_Planillas", ENCABEZADOS_HISTORIAL)):
+        ok = False
+        worksheet = conectar_gsheets(hoja, crear=True)
+        if worksheet is not None:
+            try:
+                if not worksheet.row_values(1):
+                    worksheet.update(values=[encabezados], range_name="A1")
+                ok = True
+            except Exception:
+                ok = False
+        resultados[hoja] = ok
+    return resultados
+
+
+
 # =====================================================================
 # 3. CONFIGURACIÓN DE PÁGINA
 # =====================================================================
 logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logo.png")
 try:
     if os.path.exists(logo_path):
-        st.set_page_config(page_title="Gio Group · Gerencia", page_icon=Image.open(logo_path), layout="wide", initial_sidebar_state="expanded")
+        st.set_page_config(page_title="Gio Group · Gerencia", page_icon=Image.open(logo_path), layout="wide", initial_sidebar_state="auto")
     else:
-        st.set_page_config(page_title="Gio Group · Gerencia", page_icon="🏢", layout="wide", initial_sidebar_state="expanded")
+        st.set_page_config(page_title="Gio Group · Gerencia", page_icon="🏢", layout="wide", initial_sidebar_state="auto")
 except Exception:
     st.set_page_config(page_title="Gio Group · Gerencia", page_icon="🏢", layout="wide")
 
@@ -590,9 +726,12 @@ DEFAULTS_GLOBALES = {
     "pdf_ok": False,
     "pdf_error": "",
     "pdf_meta": {},
+    "pdf_resumen": {},
+    "pagos_ok": False,
     "reporte_df": None,
     "resumen_pdf": {},
     "indices_por_colab": {},
+    "historial_local": {},
     "uploader_nonce": 0,
     "nonce_editor_personal": 0,
     "prov_modo": "ver",
@@ -719,6 +858,11 @@ def campo_persistente(widget_fn, label, state_key, ui_key, conv=None, **kwargs):
     return valor
 
 
+def sembrar(clave, valor):
+    if clave not in st.session_state:
+        st.session_state[clave] = valor
+
+
 def reiniciar_widgets_planilla(prefijos=("ui_b_net_", "ui_c_")):
     for emp in st.session_state["empleados"].keys():
         for p in prefijos:
@@ -732,15 +876,35 @@ def registrar_auditoria(tipo, destinatario):
 
 
 # =====================================================================
-# 5. IMÁGENES (SVG embebidas)
+# 5. LOGO E IMÁGENES (SVG con los colores del tema)
 # =====================================================================
 def _svg_uri(svg):
     return "data:image/svg+xml;base64," + base64.b64encode(svg.encode("utf-8")).decode("ascii")
 
 
+def logo_bytes():
+    """Logo subido en Configuración; si no hay, el archivo logo.png del proyecto."""
+    b64 = _texto(aj("logo_b64"))
+    if b64:
+        try:
+            return base64.b64decode(b64)
+        except Exception:
+            pass
+    if os.path.exists(logo_path):
+        try:
+            with open(logo_path, "rb") as fh:
+                return fh.read()
+        except Exception:
+            pass
+    return None
+
+
 def img_logo():
+    contenido = logo_bytes()
+    if contenido:
+        return "data:image/png;base64," + base64.b64encode(contenido).decode("ascii")
     t = tema()
-    letras = html.escape(_iniciales(aj("empresa_corto")) or "GG")
+    letras = html.escape(_iniciales(aj("empresa_corto")))
     return _svg_uri(
         "<svg xmlns='http://www.w3.org/2000/svg' width='48' height='48' viewBox='0 0 48 48'>"
         f"<defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='{t['p']}'/><stop offset='1' stop-color='{t['acc']}'/></linearGradient></defs>"
@@ -749,9 +913,55 @@ def img_logo():
     )
 
 
-IMG_HERO = _svg_uri("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 340 220'><defs><linearGradient id='p' x1='0' y1='0' x2='0' y2='1'><stop offset='0' stop-color='#FFFFFF'/><stop offset='1' stop-color='#EEF2FF'/></linearGradient><linearGradient id='b' x1='0' y1='0' x2='0' y2='1'><stop offset='0' stop-color='#818CF8'/><stop offset='1' stop-color='#4F46E5'/></linearGradient><linearGradient id='l' x1='0' y1='0' x2='1' y2='0'><stop offset='0' stop-color='#34D399'/><stop offset='1' stop-color='#22D3EE'/></linearGradient><linearGradient id='c' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='#FDE68A'/><stop offset='1' stop-color='#F59E0B'/></linearGradient></defs><rect x='34' y='26' width='236' height='160' rx='18' fill='url(#p)'/><rect x='54' y='46' width='84' height='9' rx='4.5' fill='#C7D2FE'/><rect x='54' y='62' width='52' height='7' rx='3.5' fill='#E0E7FF'/><rect x='60' y='132' width='18' height='36' rx='5' fill='url(#b)' opacity='.45'/><rect x='90' y='118' width='18' height='50' rx='5' fill='url(#b)' opacity='.6'/><rect x='120' y='124' width='18' height='44' rx='5' fill='url(#b)' opacity='.5'/><rect x='150' y='100' width='18' height='68' rx='5' fill='url(#b)' opacity='.75'/><rect x='180' y='92' width='18' height='76' rx='5' fill='url(#b)' opacity='.85'/><rect x='210' y='72' width='18' height='96' rx='5' fill='url(#b)'/><polyline points='69,118 99,104 129,110 159,86 189,78 219,56' fill='none' stroke='url(#l)' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/><circle cx='219' cy='56' r='7' fill='#FFFFFF' stroke='#22D3EE' stroke-width='3'/><rect x='222' y='112' width='100' height='70' rx='14' fill='#FFFFFF'/><circle cx='252' cy='147' r='17' fill='none' stroke='#E0E7FF' stroke-width='7'/><circle cx='252' cy='147' r='17' fill='none' stroke='#4F46E5' stroke-width='7' stroke-dasharray='70 107' stroke-linecap='round' transform='rotate(-90 252 147)'/><rect x='278' y='136' width='32' height='7' rx='3.5' fill='#C7D2FE'/><rect x='278' y='150' width='22' height='7' rx='3.5' fill='#E0E7FF'/><circle cx='40' cy='170' r='24' fill='url(#c)'/><text x='40' y='179' font-family='Arial, sans-serif' font-size='24' font-weight='700' fill='#FFFFFF' text-anchor='middle'>$</text></svg>")
-IMG_REPORTE = _svg_uri("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 150'><defs><linearGradient id='u' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='#6366F1'/><stop offset='1' stop-color='#0EA5E9'/></linearGradient></defs><ellipse cx='100' cy='136' rx='70' ry='8' fill='#E2E8F0'/><rect x='56' y='14' width='86' height='112' rx='12' fill='#FFFFFF' stroke='#C7D2FE' stroke-width='2'/><rect x='70' y='34' width='42' height='7' rx='3.5' fill='#C7D2FE'/><rect x='70' y='48' width='58' height='6' rx='3' fill='#E0E7FF'/><rect x='70' y='60' width='50' height='6' rx='3' fill='#E0E7FF'/><rect x='70' y='72' width='56' height='6' rx='3' fill='#E0E7FF'/><rect x='70' y='90' width='30' height='16' rx='4' fill='#EF4444'/><text x='85' y='101.5' font-family='Arial, sans-serif' font-size='9' font-weight='700' fill='#FFFFFF' text-anchor='middle'>PDF</text><circle cx='146' cy='104' r='22' fill='url(#u)'/><path d='M146 115v-20m-8 8l8-8 8 8' fill='none' stroke='#FFFFFF' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'/></svg>")
-IMG_DIRECTORIO = _svg_uri("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 150'><ellipse cx='100' cy='136' rx='70' ry='8' fill='#E2E8F0'/><rect x='50' y='18' width='100' height='108' rx='14' fill='#FFFFFF' stroke='#C7D2FE' stroke-width='2'/><circle cx='100' cy='54' r='17' fill='#EEF2FF'/><circle cx='100' cy='49' r='7' fill='#818CF8'/><path d='M87 66c3-8 23-8 26 0' fill='#818CF8'/><rect x='70' y='84' width='60' height='7' rx='3.5' fill='#C7D2FE'/><rect x='78' y='98' width='44' height='6' rx='3' fill='#E0E7FF'/><circle cx='150' cy='108' r='18' fill='#10B981'/><path d='M141 108l6 6 12-12' fill='none' stroke='#FFFFFF' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'/></svg>")
+def img_hero():
+    t = tema()
+    return _svg_uri(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 340 220'><defs>"
+        f"<linearGradient id='p' x1='0' y1='0' x2='0' y2='1'><stop offset='0' stop-color='#FFFFFF'/><stop offset='1' stop-color='{t['p50']}'/></linearGradient>"
+        f"<linearGradient id='b' x1='0' y1='0' x2='0' y2='1'><stop offset='0' stop-color='{t['p400']}'/><stop offset='1' stop-color='{t['p']}'/></linearGradient>"
+        f"<linearGradient id='l' x1='0' y1='0' x2='1' y2='0'><stop offset='0' stop-color='#34D399'/><stop offset='1' stop-color='{t['acc']}'/></linearGradient>"
+        "<linearGradient id='c' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='#FDE68A'/><stop offset='1' stop-color='#F59E0B'/></linearGradient></defs>"
+        "<rect x='34' y='26' width='236' height='160' rx='18' fill='url(#p)'/>"
+        f"<rect x='54' y='46' width='84' height='9' rx='4.5' fill='{t['p100']}'/><rect x='54' y='62' width='52' height='7' rx='3.5' fill='{t['p50']}'/>"
+        "<rect x='60' y='132' width='18' height='36' rx='5' fill='url(#b)' opacity='.45'/><rect x='90' y='118' width='18' height='50' rx='5' fill='url(#b)' opacity='.6'/>"
+        "<rect x='120' y='124' width='18' height='44' rx='5' fill='url(#b)' opacity='.5'/><rect x='150' y='100' width='18' height='68' rx='5' fill='url(#b)' opacity='.75'/>"
+        "<rect x='180' y='92' width='18' height='76' rx='5' fill='url(#b)' opacity='.85'/><rect x='210' y='72' width='18' height='96' rx='5' fill='url(#b)'/>"
+        "<polyline points='69,118 99,104 129,110 159,86 189,78 219,56' fill='none' stroke='url(#l)' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/>"
+        f"<circle cx='219' cy='56' r='7' fill='#FFFFFF' stroke='{t['acc']}' stroke-width='3'/><rect x='222' y='112' width='100' height='70' rx='14' fill='#FFFFFF'/>"
+        f"<circle cx='252' cy='147' r='17' fill='none' stroke='{t['p100']}' stroke-width='7'/>"
+        f"<circle cx='252' cy='147' r='17' fill='none' stroke='{t['p']}' stroke-width='7' stroke-dasharray='70 107' stroke-linecap='round' transform='rotate(-90 252 147)'/>"
+        f"<rect x='278' y='136' width='32' height='7' rx='3.5' fill='{t['p100']}'/><rect x='278' y='150' width='22' height='7' rx='3.5' fill='{t['p50']}'/>"
+        "<circle cx='40' cy='170' r='24' fill='url(#c)'/>"
+        "<text x='40' y='179' font-family='Arial, sans-serif' font-size='24' font-weight='700' fill='#FFFFFF' text-anchor='middle'>$</text></svg>"
+    )
+
+
+def img_reporte():
+    t = tema()
+    return _svg_uri(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 150'>"
+        f"<defs><linearGradient id='u' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='{t['p400']}'/><stop offset='1' stop-color='{t['acc']}'/></linearGradient></defs>"
+        "<ellipse cx='100' cy='136' rx='70' ry='8' fill='#E2E8F0'/>"
+        f"<rect x='56' y='14' width='86' height='112' rx='12' fill='#FFFFFF' stroke='{t['p100']}' stroke-width='2'/>"
+        f"<rect x='70' y='34' width='42' height='7' rx='3.5' fill='{t['p100']}'/><rect x='70' y='48' width='58' height='6' rx='3' fill='{t['p50']}'/>"
+        f"<rect x='70' y='60' width='50' height='6' rx='3' fill='{t['p50']}'/><rect x='70' y='72' width='56' height='6' rx='3' fill='{t['p50']}'/>"
+        "<rect x='70' y='90' width='30' height='16' rx='4' fill='#EF4444'/>"
+        "<text x='85' y='101.5' font-family='Arial, sans-serif' font-size='9' font-weight='700' fill='#FFFFFF' text-anchor='middle'>PDF</text>"
+        "<circle cx='146' cy='104' r='22' fill='url(#u)'/>"
+        "<path d='M146 115v-20m-8 8l8-8 8 8' fill='none' stroke='#FFFFFF' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'/></svg>"
+    )
+
+
+def img_directorio():
+    t = tema()
+    return _svg_uri(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 150'><ellipse cx='100' cy='136' rx='70' ry='8' fill='#E2E8F0'/>"
+        f"<rect x='50' y='18' width='100' height='108' rx='14' fill='#FFFFFF' stroke='{t['p100']}' stroke-width='2'/>"
+        f"<circle cx='100' cy='54' r='17' fill='{t['p50']}'/><circle cx='100' cy='49' r='7' fill='{t['p400']}'/><path d='M87 66c3-8 23-8 26 0' fill='{t['p400']}'/>"
+        f"<rect x='70' y='84' width='60' height='7' rx='3.5' fill='{t['p100']}'/><rect x='78' y='98' width='44' height='6' rx='3' fill='{t['p50']}'/>"
+        "<circle cx='150' cy='108' r='18' fill='#10B981'/>"
+        "<path d='M141 108l6 6 12-12' fill='none' stroke='#FFFFFF' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'/></svg>"
+    )
 
 
 # =====================================================================
@@ -767,125 +977,125 @@ def css_tema():
 
 CSS_BASE = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-:root { --bg: #F5F7FB; --surface: #FFFFFF; --ink: #0B1220; --ink-2: #334155; --muted: #64748B; --soft: #94A3B8; --line: #E6EAF1; --line-2: #EEF1F6; --radius: 14px; --shadow-sm: 0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06); --shadow-md: 0 10px 28px rgba(16,24,40,.08), 0 2px 6px rgba(16,24,40,.04); }
-.stApp { background: var(--bg) !important; }
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap');
+:root { --bg: #F4F6FA; --surface: #FFFFFF; --ink: #0B1220; --ink-2: #334155; --muted: #64748B; --soft: #94A3B8; --line: #E5E9F0; --line-2: #EEF1F6; --radius: 16px;
+  --shadow-sm: 0 1px 2px rgba(16,24,40,.04), 0 2px 8px rgba(16,24,40,.04); --shadow-md: 0 14px 34px rgba(16,24,40,.09), 0 3px 8px rgba(16,24,40,.04);
+  --display: 'Plus Jakarta Sans', 'Inter', -apple-system, 'Segoe UI', sans-serif; }
+.stApp { background: radial-gradient(1100px 520px at 100% -10%, rgba(var(--glow),.12), transparent 60%), radial-gradient(900px 500px at -15% 105%, rgba(var(--glow),.07), transparent 60%), var(--bg) !important; }
 .stApp, .stApp p, .stApp li, .stApp label, .stApp input, .stApp textarea, .stApp button, .stMarkdown { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important; }
 #MainMenu, footer, [data-testid="stDecoration"], .stAppDeployButton { display: none !important; }
 [data-testid="stHeader"] { background: transparent !important; }
-.block-container { padding-top: 1.6rem !important; padding-bottom: 3rem !important; max-width: 1360px; }
-h1, h2, h3, h4 { color: var(--ink) !important; letter-spacing: -0.02em; }
+.block-container { padding: 2.4rem 2.2rem 2.5rem 2.2rem !important; max-width: 1360px; }
+h1, h2, h3, h4 { color: var(--ink) !important; letter-spacing: -0.02em; font-family: var(--display) !important; }
 @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
 /* ---------- Menú lateral ---------- */
-[data-testid="stSidebar"] { background: #FFFFFF !important; border-right: 1px solid var(--line); }
-.brand { display: flex; align-items: center; gap: 12px; padding: 6px 6px 18px 6px; border-bottom: 1px solid var(--line-2); margin-bottom: 4px; }
-.brand img { width: 44px; height: 44px; border-radius: 14px; box-shadow: 0 8px 18px rgba(15,23,42,.18); }
-.brand-name { font-weight: 800; font-size: 1.08rem; color: var(--ink); letter-spacing: -0.01em; }
-.brand-sub { font-size: .75rem; color: var(--muted); }
-.nav-sec { font-size: .66rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--soft); margin: 16px 8px 6px 8px; }
-[class*="st-key-nav_"] { gap: .2rem !important; }
+[data-testid="stSidebar"] { background: linear-gradient(180deg, #FFFFFF 0%, #FBFCFE 100%) !important; border-right: 1px solid var(--line); }
+.brand { display: flex; align-items: center; gap: 12px; padding: 4px 6px 18px 6px; border-bottom: 1px solid var(--line-2); margin-bottom: 2px; }
+.brand img { width: 46px; height: 46px; border-radius: 14px; object-fit: contain; background: #FFFFFF; box-shadow: 0 8px 18px rgba(15,23,42,.14); flex-shrink: 0; }
+.brand-name { font-family: var(--display); font-weight: 800; font-size: 1.1rem; color: var(--ink); letter-spacing: -0.01em; line-height: 1.2; }
+.brand-sub { font-size: .74rem; color: var(--muted); margin-top: 1px; }
+.nav-sec { font-size: .64rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--soft); margin: 18px 10px 6px 10px; }
+[class*="st-key-nav_"] { gap: .15rem !important; }
 [class*="st-key-nav_"] .stButton button {
-    justify-content: flex-start !important; text-align: left !important; background: transparent !important;
-    border: 1px solid transparent !important; box-shadow: none !important; color: var(--ink-2) !important;
-    font-weight: 500 !important; padding: .55rem .8rem !important; border-radius: 10px !important; transform: none !important;
-}
+  justify-content: flex-start !important; text-align: left !important; background: transparent !important; border: 1px solid transparent !important;
+  box-shadow: none !important; color: var(--ink-2) !important; font-weight: 500 !important; padding: .55rem .8rem !important; border-radius: 11px !important;
+  transform: none !important; min-height: 2.6rem; }
 [class*="st-key-nav_"] .stButton button > div, [class*="st-key-nav_"] .stButton button p { justify-content: flex-start !important; text-align: left !important; }
-[class*="st-key-nav_"] .stButton button:hover { background: var(--primary-50) !important; color: var(--primary-600) !important; transform: none !important; }
+[class*="st-key-nav_"] .stButton button:hover { background: var(--primary-50) !important; color: var(--primary-600) !important; transform: none !important; box-shadow: none !important; }
 [class*="st-key-nav_"] .stButton button[kind="primary"], [class*="st-key-nav_"] .stButton button[data-testid="stBaseButton-primary"] {
-    background: linear-gradient(90deg, var(--primary-50), rgba(255,255,255,0)) !important; color: var(--primary-600) !important;
-    font-weight: 700 !important; box-shadow: inset 3px 0 0 var(--primary) !important; filter: none !important;
-}
+  background: linear-gradient(90deg, var(--primary-50), rgba(255,255,255,0)) !important; color: var(--primary-600) !important; font-weight: 700 !important;
+  box-shadow: inset 3px 0 0 var(--primary) !important; filter: none !important; }
 [class*="st-key-nav_"] .stButton button[kind="primary"] p, [class*="st-key-nav_"] .stButton button[data-testid="stBaseButton-primary"] p { color: var(--primary-600) !important; }
-.side-card { background: #F8FAFC; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-top: 18px; font-size: .8rem; color: var(--ink-2); }
-.side-title { font-size: .66rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--soft); margin-bottom: 6px; }
-.side-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 0; }
-.side-row b { color: var(--ink); font-weight: 600; }
+.side-card { background: #F8FAFC; border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; margin-top: 18px; font-size: .8rem; color: var(--ink-2); }
+.side-title { font-size: .64rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--soft); margin-bottom: 6px; }
+.side-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 0; }
+.side-row b { color: var(--ink); font-weight: 600; text-align: right; }
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
 .dot.on { background: #10B981; box-shadow: 0 0 0 3px rgba(16,185,129,.18); }
 .dot.off { background: #F59E0B; box-shadow: 0 0 0 3px rgba(245,158,11,.18); }
-.profile { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: #FFFFFF; }
-.avatar { width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, var(--primary), var(--accent)); color: #FFFFFF; font-weight: 700; display: flex; align-items: center; justify-content: center; font-size: .8rem; flex-shrink: 0; }
+.profile { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding: 10px 12px; border-radius: 14px; border: 1px solid var(--line); background: #FFFFFF; }
+.avatar { width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, var(--primary), var(--accent)); color: #FFFFFF; font-weight: 700; display: flex; align-items: center; justify-content: center; font-size: .78rem; flex-shrink: 0; }
 .profile-name { font-weight: 700; color: var(--ink); font-size: .85rem; }
-.profile-role { color: var(--muted); font-size: .75rem; }
+.profile-role { color: var(--muted); font-size: .74rem; }
+.version { text-align: center; color: var(--soft); font-size: .7rem; margin-top: 14px; }
 
 /* ---------- Encabezados ---------- */
-.hero { position: relative; overflow: hidden; display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 30px 34px; border-radius: 20px; margin-bottom: 18px; background: radial-gradient(900px 260px at 85% -30%, rgba(var(--glow),.55), transparent 60%), linear-gradient(135deg, var(--hero1) 0%, var(--hero2) 45%, var(--hero3) 100%); box-shadow: 0 18px 40px rgba(15,23,42,.22); animation: fadeUp .5s ease both; }
+.hero { position: relative; overflow: hidden; display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 30px 34px; border-radius: 22px; margin-bottom: 18px; background: radial-gradient(900px 260px at 85% -30%, rgba(var(--glow),.55), transparent 60%), linear-gradient(135deg, var(--hero1) 0%, var(--hero2) 45%, var(--hero3) 100%); box-shadow: 0 18px 40px rgba(15,23,42,.22); animation: fadeUp .5s ease both; }
 .hero::after { content: ""; position: absolute; inset: 0; pointer-events: none; background-image: radial-gradient(rgba(255,255,255,.07) 1px, transparent 1px); background-size: 18px 18px; }
-.hero-body { position: relative; z-index: 1; }
-.hero-kicker { font-size: .78rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: rgba(255,255,255,.72) !important; }
-.hero-title { font-size: 2.05rem; font-weight: 800; letter-spacing: -0.03em; margin-top: 6px; color: #FFFFFF !important; line-height: 1.15; }
-.hero-sub { color: rgba(255,255,255,.78) !important; margin-top: 8px; font-size: .98rem; max-width: 600px; line-height: 1.5; }
+.hero-body { position: relative; z-index: 1; min-width: 0; }
+.hero-kicker { font-size: .76rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: rgba(255,255,255,.72) !important; }
+.hero-title { font-family: var(--display); font-size: 2.1rem; font-weight: 800; letter-spacing: -0.03em; margin-top: 6px; color: #FFFFFF !important; line-height: 1.15; }
+.hero-sub { color: rgba(255,255,255,.8) !important; margin-top: 8px; font-size: .98rem; max-width: 600px; line-height: 1.5; }
 .hero-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
 .hero-chip { background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.2); color: #FFFFFF !important; padding: 6px 12px; border-radius: 999px; font-size: .8rem; font-weight: 600; }
 .hero-img { width: 300px; max-width: 36%; flex-shrink: 0; position: relative; z-index: 1; filter: drop-shadow(0 14px 26px rgba(0,0,0,.28)); }
-@media (max-width: 900px) { .hero { flex-direction: column; align-items: flex-start; } .hero-img { display: none; } .hero-title { font-size: 1.6rem; } }
-.page-head { display: flex; align-items: center; gap: 14px; margin: 2px 0 18px 0; animation: fadeUp .4s ease both; }
-.page-ico { width: 48px; height: 48px; border-radius: 14px; background: linear-gradient(135deg, var(--primary-50), var(--primary-100)); border: 1px solid var(--primary-100); display: flex; align-items: center; justify-content: center; font-size: 1.4rem; flex-shrink: 0; }
-.page-kicker { font-size: .72rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--primary); }
-.page-title { font-size: 1.65rem; font-weight: 800; color: var(--ink); letter-spacing: -0.025em; line-height: 1.2; }
-.page-sub { font-size: .92rem; color: var(--muted); margin-top: 2px; }
+.page-head { display: flex; align-items: center; gap: 14px; margin: 0 0 18px 0; animation: fadeUp .4s ease both; }
+.page-ico { width: 50px; height: 50px; border-radius: 15px; background: linear-gradient(135deg, var(--primary-50), var(--primary-100)); border: 1px solid var(--primary-100); display: flex; align-items: center; justify-content: center; font-size: 1.4rem; flex-shrink: 0; }
+.page-kicker { font-size: .7rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--primary); }
+.page-title { font-family: var(--display); font-size: 1.7rem; font-weight: 800; color: var(--ink); letter-spacing: -0.025em; line-height: 1.2; }
+.page-sub { font-size: .92rem; color: var(--muted); margin-top: 3px; line-height: 1.45; }
 
 /* ---------- Tarjetas ---------- */
 [class*="st-key-card_"] { background: var(--surface) !important; border: 1px solid var(--line) !important; border-radius: var(--radius) !important; padding: 20px 22px !important; box-shadow: var(--shadow-sm) !important; transition: box-shadow .2s ease, border-color .2s ease; animation: fadeUp .45s ease both; }
 [class*="st-key-card_"]:hover { box-shadow: var(--shadow-md) !important; border-color: #DCE1EA !important; }
-.sec-title { font-size: 1.02rem; font-weight: 700; color: var(--ink); }
-.sec-sub { font-size: .83rem; color: var(--muted); margin: 2px 0 6px 0; }
-.kpi { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; box-shadow: var(--shadow-sm); transition: transform .2s ease, box-shadow .2s ease; height: 100%; animation: fadeUp .45s ease both; }
+.sec-title { font-family: var(--display); font-size: 1.04rem; font-weight: 700; color: var(--ink); letter-spacing: -0.01em; }
+.sec-sub { font-size: .84rem; color: var(--muted); margin: 3px 0 8px 0; line-height: 1.45; }
+.kpi { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; box-shadow: var(--shadow-sm); transition: transform .2s ease, box-shadow .2s ease; min-height: 132px; display: flex; flex-direction: column; animation: fadeUp .45s ease both; }
 .kpi:hover { transform: translateY(-3px); box-shadow: var(--shadow-md); }
 .kpi-top { display: flex; align-items: center; gap: 10px; }
 .kpi-ico { width: 38px; height: 38px; border-radius: 11px; display: flex; align-items: center; justify-content: center; font-size: 1.05rem; flex-shrink: 0; }
 .kpi-ico.indigo { background: var(--primary-50); } .kpi-ico.sky { background: #E0F2FE; } .kpi-ico.green { background: #ECFDF5; } .kpi-ico.amber { background: #FFFBEB; } .kpi-ico.red { background: #FEF2F2; } .kpi-ico.violet { background: #F5F3FF; }
-.kpi-label { font-size: .74rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
-.kpi-value { font-size: 1.7rem; font-weight: 800; color: var(--ink); letter-spacing: -0.03em; margin-top: 12px; font-variant-numeric: tabular-nums; }
+.kpi-label { font-size: .72rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; line-height: 1.3; }
+.kpi-value { font-family: var(--display); font-size: 1.75rem; font-weight: 800; color: var(--ink); letter-spacing: -0.03em; margin-top: 12px; font-variant-numeric: tabular-nums; line-height: 1.1; overflow-wrap: anywhere; }
 .kpi-value.pos { color: #047857; } .kpi-value.neg { color: #B91C1C; } .kpi-value.prim { color: var(--primary-600); }
-.kpi-note { font-size: .8rem; color: var(--muted); margin-top: 4px; }
+.kpi-note { font-size: .8rem; color: var(--muted); margin-top: auto; padding-top: 6px; line-height: 1.4; }
 .bar { height: 6px; border-radius: 999px; background: #F1F5F9; overflow: hidden; margin-top: 8px; }
 .bar span { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, #F59E0B, #FBBF24); }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 8px 0; }
-.chip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 999px; font-size: .78rem; font-weight: 600; background: #F1F5F9; color: #334155; border: 1px solid #E2E8F0; white-space: nowrap; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 999px; font-size: .78rem; font-weight: 600; background: #F1F5F9; color: #334155; border: 1px solid #E2E8F0; line-height: 1.35; max-width: 100%; }
 .chip.indigo { background: var(--primary-50); color: var(--primary-600); border-color: var(--primary-100); } .chip.green { background: #ECFDF5; color: #047857; border-color: #A7F3D0; } .chip.amber { background: #FFFBEB; color: #B45309; border-color: #FDE68A; } .chip.red { background: #FEF2F2; color: #B91C1C; border-color: #FECACA; } .chip.sky { background: #F0F9FF; color: #0369A1; border-color: #BAE6FD; } .chip.violet { background: #F5F3FF; color: #6D28D9; border-color: #DDD6FE; }
 [class*="st-key-peligro"] .stButton button { background: linear-gradient(135deg, #DC2626 0%, #EF4444 100%) !important; color: #FFFFFF !important; border: none !important; box-shadow: 0 6px 16px rgba(220,38,38,.25) !important; }
 [class*="st-key-peligro"] .stButton button p { color: #FFFFFF !important; }
 [class*="st-key-peligro"] .stButton button:hover { filter: brightness(1.06); box-shadow: 0 10px 24px rgba(220,38,38,.34) !important; color: #FFFFFF !important; }
 .confirmar-borrado { background: #FEF2F2; border: 1px solid #FECACA; color: #991B1B; border-radius: 12px; padding: 12px 14px; font-size: .9rem; margin: 6px 0 8px 0; }
-.empty { display: flex; align-items: center; gap: 30px; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 28px 34px; box-shadow: var(--shadow-sm); animation: fadeUp .45s ease both; }
+.empty { display: flex; align-items: center; gap: 30px; background: var(--surface); border: 1px solid var(--line); border-radius: 20px; padding: 28px 34px; box-shadow: var(--shadow-sm); animation: fadeUp .45s ease both; }
 .empty img { width: 210px; flex-shrink: 0; }
-.empty-title { font-size: 1.25rem; font-weight: 800; color: var(--ink); letter-spacing: -0.02em; }
+.empty-title { font-family: var(--display); font-size: 1.25rem; font-weight: 800; color: var(--ink); letter-spacing: -0.02em; }
 .empty-text { color: var(--muted); margin-top: 4px; }
 .steps { margin-top: 14px; display: grid; gap: 9px; }
 .step { display: flex; gap: 10px; align-items: center; font-size: .9rem; color: var(--ink-2); }
 .step b { width: 24px; height: 24px; border-radius: 50%; background: var(--primary-50); color: var(--primary-600); display: flex; align-items: center; justify-content: center; font-size: .75rem; flex-shrink: 0; }
-@media (max-width: 700px) { .empty { flex-direction: column; text-align: center; } .step { justify-content: center; } }
+.footer { text-align: center; color: var(--soft); font-size: .76rem; margin-top: 36px; padding-top: 16px; border-top: 1px solid var(--line); }
 
 /* ---------- Planilla ---------- */
-.periodo { display: flex; align-items: center; gap: 16px; padding: 16px 18px; border-radius: 14px; background: linear-gradient(135deg, var(--primary-50), #FFFFFF 70%); border: 1px solid var(--primary-100); margin: 4px 0 6px 0; animation: fadeUp .4s ease both; }
+.periodo { display: flex; align-items: center; gap: 16px; padding: 16px 18px; border-radius: 14px; background: linear-gradient(135deg, var(--primary-50), #FFFFFF 70%); border: 1px solid var(--primary-100); margin: 2px 0 4px 0; animation: fadeUp .4s ease both; }
 .periodo-ico { width: 46px; height: 46px; border-radius: 12px; background: linear-gradient(135deg, var(--primary), var(--accent)); color: #FFFFFF; display: flex; align-items: center; justify-content: center; font-size: 1.3rem; flex-shrink: 0; }
-.periodo-t { font-weight: 800; color: var(--ink); font-size: 1.1rem; letter-spacing: -0.01em; }
-.periodo-s { color: var(--muted); font-size: .84rem; margin-top: 2px; }
+.periodo-t { font-family: var(--display); font-weight: 800; color: var(--ink); font-size: 1.12rem; letter-spacing: -0.01em; }
+.periodo-s { color: var(--muted); font-size: .84rem; margin-top: 2px; line-height: 1.4; }
 .periodo-q { margin-left: auto; text-align: right; flex-shrink: 0; }
-.periodo-q b { font-size: 1.9rem; color: var(--primary-600); display: block; line-height: 1; font-weight: 800; }
-.periodo-q span { font-size: .68rem; color: var(--muted); text-transform: uppercase; letter-spacing: .07em; font-weight: 700; }
-.pago { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 18px 18px 14px 18px; box-shadow: var(--shadow-sm); transition: transform .2s ease, box-shadow .2s ease; height: 100%; animation: fadeUp .45s ease both; position: relative; overflow: hidden; margin-bottom: 14px; }
+.periodo-q b { font-family: var(--display); font-size: 1.95rem; color: var(--primary-600); display: block; line-height: 1; font-weight: 800; }
+.periodo-q span { font-size: .66rem; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; font-weight: 700; }
+.pago { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 18px 18px 14px 18px; box-shadow: var(--shadow-sm); transition: transform .2s ease, box-shadow .2s ease; min-height: 270px; display: flex; flex-direction: column; animation: fadeUp .45s ease both; position: relative; overflow: hidden; margin-bottom: 14px; }
 .pago::before { content: ""; position: absolute; left: 0; top: 0; right: 0; height: 4px; background: linear-gradient(90deg, var(--primary), var(--accent)); }
 .pago:hover { transform: translateY(-3px); box-shadow: var(--shadow-md); }
 .pago-top { display: flex; gap: 12px; align-items: center; }
 .pago-av { width: 42px; height: 42px; border-radius: 12px; background: var(--primary-50); color: var(--primary-600); font-weight: 800; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .pago-nom { font-weight: 700; color: var(--ink); line-height: 1.25; }
 .pago-sub { font-size: .76rem; color: var(--muted); margin-top: 2px; }
-.pago-total { font-size: 1.9rem; font-weight: 800; color: var(--ink); letter-spacing: -0.03em; margin-top: 14px; font-variant-numeric: tabular-nums; line-height: 1.1; }
-.pago-lbl { font-size: .7rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--primary-600); margin-top: 2px; }
+.pago-total { font-family: var(--display); font-size: 1.95rem; font-weight: 800; color: var(--ink); letter-spacing: -0.03em; margin-top: 14px; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.pago-lbl { font-size: .68rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--primary-600); margin-top: 3px; }
 .pago-lines { margin-top: 12px; border-top: 1px dashed var(--line); padding-top: 8px; }
 .pl { display: flex; justify-content: space-between; gap: 10px; font-size: .84rem; color: var(--ink-2); padding: 3px 0; }
 .pl b { font-variant-numeric: tabular-nums; color: var(--ink); font-weight: 700; white-space: nowrap; }
 .pl.info { color: var(--soft); font-size: .76rem; } .pl.info b { color: var(--soft); font-weight: 600; }
 .pl.neg b { color: #B91C1C; } .pl.pos b { color: #047857; }
 .neto { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: linear-gradient(135deg, #FFFFFF, var(--primary-50)); border: 1px solid var(--primary-100); border-radius: 12px; padding: 12px 16px; margin-top: 8px; }
-.neto-label { font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--primary-600); }
-.neto-formula { font-size: .8rem; color: var(--muted); font-variant-numeric: tabular-nums; margin-top: 2px; }
-.neto-valor { font-size: 1.4rem; font-weight: 800; color: var(--primary-600); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.neto-label { font-size: .7rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--primary-600); }
+.neto-formula { font-size: .8rem; color: var(--muted); font-variant-numeric: tabular-nums; margin-top: 2px; line-height: 1.45; }
+.neto-valor { font-family: var(--display); font-size: 1.45rem; font-weight: 800; color: var(--primary-600); font-variant-numeric: tabular-nums; white-space: nowrap; }
 table.sal { width: 100%; border-collapse: collapse; font-size: .88rem; margin-top: 6px; }
-table.sal th { text-align: right; font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); padding: 6px 8px; border-bottom: 1px solid var(--line); }
+table.sal th { text-align: right; font-size: .68rem; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); padding: 6px 8px; border-bottom: 1px solid var(--line); }
 table.sal td { padding: 8px; text-align: right; font-variant-numeric: tabular-nums; color: var(--ink); border-bottom: 1px solid var(--line-2); }
 table.sal td:first-child, table.sal th:first-child { text-align: left; color: var(--ink-2); }
 table.sal tr.neg td { color: #B91C1C; }
@@ -897,8 +1107,21 @@ table.sal tr.tot td { font-weight: 800; color: var(--primary-600); background: v
 .sw i { width: 18px; height: 18px; border-radius: 6px; display: inline-block; }
 .sw.on { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-100); color: var(--primary-600); }
 
+/* ---------- E-commerce ---------- */
+.marca { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 16px 18px 16px 22px; box-shadow: var(--shadow-sm); position: relative; overflow: hidden; min-height: 160px; display: flex; flex-direction: column; margin-bottom: 14px; animation: fadeUp .45s ease both; transition: transform .2s ease, box-shadow .2s ease; }
+.marca:hover { transform: translateY(-3px); box-shadow: var(--shadow-md); }
+.marca::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 5px; background: var(--c); }
+.marca-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.marca-nom { font-weight: 700; color: var(--ink); display: flex; align-items: center; gap: 8px; }
+.marca-nom i { width: 10px; height: 10px; border-radius: 50%; background: var(--c); display: inline-block; }
+.marca-pct { font-size: .74rem; font-weight: 700; padding: 3px 9px; border-radius: 999px; background: #F1F5F9; color: var(--ink-2); }
+.marca-val { font-family: var(--display); font-size: 1.7rem; font-weight: 800; color: var(--ink); letter-spacing: -0.03em; margin-top: 10px; font-variant-numeric: tabular-nums; }
+.marca-sub { font-size: .8rem; color: var(--muted); margin-top: 2px; }
+.marca-bar { height: 6px; background: #F1F5F9; border-radius: 999px; margin-top: auto; overflow: hidden; }
+.marca-bar span { display: block; height: 100%; background: var(--c); border-radius: 999px; }
+
 /* ---------- Controles ---------- */
-.stButton button, .stDownloadButton button, [data-testid="stFormSubmitButton"] button { border-radius: 10px !important; font-weight: 600 !important; padding: .55rem 1.1rem !important; border: 1px solid var(--line) !important; background: #FFFFFF !important; color: var(--ink) !important; box-shadow: var(--shadow-sm) !important; transition: all .18s ease !important; }
+.stButton button, .stDownloadButton button, [data-testid="stFormSubmitButton"] button { border-radius: 11px !important; font-weight: 600 !important; padding: .55rem 1.1rem !important; min-height: 2.6rem; border: 1px solid var(--line) !important; background: #FFFFFF !important; color: var(--ink) !important; box-shadow: var(--shadow-sm) !important; transition: all .18s ease !important; }
 .stButton button:hover, .stDownloadButton button:hover, [data-testid="stFormSubmitButton"] button:hover { border-color: var(--primary-100) !important; color: var(--primary-600) !important; background: var(--primary-50) !important; transform: translateY(-1px); box-shadow: var(--shadow-md) !important; }
 .stButton button:active, .stDownloadButton button:active { transform: scale(.98); }
 .stButton button p, .stDownloadButton button p, [data-testid="stFormSubmitButton"] button p { color: inherit !important; font-weight: 600 !important; }
@@ -906,10 +1129,10 @@ table.sal tr.tot td { font-weight: 800; color: var(--primary-600); background: v
 [data-testid="stBaseButton-primary"], [data-testid="stBaseButton-primaryFormSubmit"] { background: linear-gradient(135deg, var(--primary) 0%, var(--primary-400) 55%, var(--accent) 140%) !important; color: #FFFFFF !important; border: none !important; box-shadow: 0 6px 16px rgba(15,23,42,.18) !important; }
 .stButton button[kind="primary"]:hover, .stDownloadButton button[kind="primary"]:hover, [data-testid="stFormSubmitButton"] button[kind="primary"]:hover { filter: brightness(1.07); box-shadow: 0 10px 24px rgba(15,23,42,.24) !important; color: #FFFFFF !important; }
 .stButton button:disabled, .stDownloadButton button:disabled { opacity: .45 !important; transform: none !important; box-shadow: none !important; }
-[data-baseweb="input"], [data-baseweb="select"] > div, [data-baseweb="textarea"] { border-radius: 10px !important; border-color: var(--line) !important; background: #FFFFFF !important; }
+[data-baseweb="input"], [data-baseweb="select"] > div, [data-baseweb="textarea"] { border-radius: 11px !important; border-color: var(--line) !important; background: #FFFFFF !important; }
 [data-baseweb="input"]:focus-within, [data-baseweb="textarea"]:focus-within { border-color: var(--primary) !important; box-shadow: 0 0 0 3px var(--primary-100) !important; }
 .stApp label p { color: var(--ink-2) !important; font-weight: 500 !important; font-size: .86rem !important; }
-[data-testid="stFileUploaderDropzone"] { background: linear-gradient(180deg, #FFFFFF, var(--primary-50)) !important; border: 1.5px dashed var(--primary-100) !important; border-radius: 12px !important; }
+[data-testid="stFileUploaderDropzone"] { background: linear-gradient(180deg, #FFFFFF, var(--primary-50)) !important; border: 1.5px dashed var(--primary-100) !important; border-radius: 14px !important; }
 [data-testid="stFileUploaderDropzone"]:hover { border-color: var(--primary) !important; }
 [data-testid="stExpander"] { background: var(--surface) !important; border: 1px solid var(--line) !important; border-radius: var(--radius) !important; box-shadow: var(--shadow-sm) !important; }
 [data-testid="stExpander"]:hover { box-shadow: var(--shadow-md) !important; }
@@ -917,25 +1140,27 @@ table.sal tr.tot td { font-weight: 800; color: var(--primary-600); background: v
 [data-testid="stExpander"] summary p { font-weight: 600 !important; color: var(--ink) !important; }
 [data-testid="stForm"] { border: none !important; padding: 0 !important; }
 [data-testid="stDataFrame"] { border-radius: 12px; overflow: hidden; }
-[data-baseweb="tab-list"] { gap: 6px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
-[data-baseweb="tab"] { padding: 8px 14px !important; font-weight: 600 !important; }
+[data-baseweb="tab-list"] { gap: 4px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
+[data-baseweb="tab-list"]::-webkit-scrollbar { display: none; }
+[data-baseweb="tab"] { padding: 8px 14px !important; font-weight: 600 !important; white-space: nowrap; }
 [data-baseweb="tab"][aria-selected="true"] p { color: var(--primary) !important; }
 [data-baseweb="tab-highlight"] { background-color: var(--primary) !important; height: 3px !important; border-radius: 3px; }
-[data-testid="stToast"] { border-radius: 12px !important; border: 1px solid var(--line) !important; box-shadow: 0 14px 34px rgba(16,24,40,.14) !important; background: #FFFFFF !important; }
+[data-testid="stToast"] { border-radius: 14px !important; border: 1px solid var(--line) !important; box-shadow: 0 14px 34px rgba(16,24,40,.14) !important; background: #FFFFFF !important; }
+[class*="st-key-navmovil"] { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 10px 12px; box-shadow: var(--shadow-sm); margin-bottom: 4px; }
 
 /* ---------- Proveedores (CRM) ---------- */
 .crm-head { display: flex; gap: 18px; align-items: center; }
-.crm-avatar { width: 68px; height: 68px; border-radius: 18px; flex-shrink: 0; background: linear-gradient(135deg, var(--primary) 0%, var(--primary-400) 55%, var(--accent) 100%); color: #FFFFFF; font-weight: 800; font-size: 1.45rem; display: flex; align-items: center; justify-content: center; box-shadow: 0 8px 20px rgba(15,23,42,.18); }
-.crm-kicker { font-size: .7rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--soft); }
-.crm-name { font-size: 1.5rem; font-weight: 800; color: var(--ink); letter-spacing: -0.02em; line-height: 1.2; margin-top: 2px; }
+.crm-avatar { width: 68px; height: 68px; border-radius: 18px; flex-shrink: 0; background: linear-gradient(135deg, var(--primary) 0%, var(--primary-400) 55%, var(--accent) 100%); color: #FFFFFF; font-family: var(--display); font-weight: 800; font-size: 1.45rem; display: flex; align-items: center; justify-content: center; box-shadow: 0 8px 20px rgba(15,23,42,.18); }
+.crm-kicker { font-size: .68rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--soft); }
+.crm-name { font-family: var(--display); font-size: 1.5rem; font-weight: 800; color: var(--ink); letter-spacing: -0.02em; line-height: 1.2; margin-top: 2px; overflow-wrap: anywhere; }
 .crm-desc { color: var(--muted); font-size: .92rem; margin-top: 4px; }
-.crm-section-title { display: flex; align-items: center; gap: 8px; font-size: .74rem; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: #475569; margin: 4px 0 6px 0; padding-bottom: 10px; border-bottom: 1px solid #F1F5F9; }
+.crm-section-title { display: flex; align-items: center; gap: 8px; font-size: .72rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #475569; margin: 4px 0 6px 0; padding-bottom: 10px; border-bottom: 1px solid #F1F5F9; }
 .crm-section-title .sdot { width: 8px; height: 8px; border-radius: 50%; }
 .crm-field { display: flex; gap: 12px; align-items: flex-start; padding: 9px 0; }
 .crm-ico { width: 36px; height: 36px; border-radius: 10px; background: #F1F5F9; display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0; transition: background .2s ease, transform .2s ease; }
 .crm-field:hover .crm-ico { background: var(--primary-100); transform: scale(1.06); }
-.crm-label { font-size: .68rem; color: var(--soft); font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
-.crm-value { font-size: .92rem; color: var(--ink); font-weight: 600; word-break: break-word; margin-top: 1px; }
+.crm-label { font-size: .66rem; color: var(--soft); font-weight: 700; text-transform: uppercase; letter-spacing: .07em; }
+.crm-value { font-size: .92rem; color: var(--ink); font-weight: 600; overflow-wrap: anywhere; margin-top: 1px; }
 .crm-value.mono { font-variant-numeric: tabular-nums; letter-spacing: .02em; }
 .crm-value.empty { color: #CBD5E1; font-weight: 500; font-style: italic; }
 .crm-value a { color: var(--primary); text-decoration: none; }
@@ -949,8 +1174,35 @@ table.sal tr.tot td { font-weight: 800; color: var(--primary-600); background: v
 .tips { display: grid; gap: 10px; margin-top: 6px; }
 .tip { display: flex; gap: 10px; font-size: .86rem; color: var(--ink-2); line-height: 1.45; }
 .tip span { flex-shrink: 0; }
+.guia { font-size: .9rem; color: var(--ink-2); line-height: 1.65; }
+.guia ol { padding-left: 1.2rem; margin: 6px 0; } .guia li { margin-bottom: 8px; } .guia b { color: var(--ink); }
+.guia code { background: var(--primary-50); color: var(--primary-600); padding: 1px 6px; border-radius: 6px; font-size: .82rem; }
+
+/* ---------- Teléfono y tablet ---------- */
+@media (min-width: 769px) { [class*="st-key-navmovil"] { display: none !important; } }
+@media (max-width: 1100px) { .hero-img { width: 230px; } .kpi-value { font-size: 1.5rem; } }
+@media (max-width: 768px) {
+  .block-container { padding: 3.6rem 1rem 2rem 1rem !important; }
+  [data-testid="stHeader"] { background: rgba(244,246,250,.88) !important; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+  .hero { flex-direction: column; align-items: flex-start; padding: 22px 20px; border-radius: 18px; }
+  .hero-img { display: none; } .hero-title { font-size: 1.55rem; } .hero-sub { font-size: .9rem; }
+  .page-head { gap: 12px; margin-bottom: 14px; } .page-ico { width: 42px; height: 42px; font-size: 1.2rem; border-radius: 12px; }
+  .page-title { font-size: 1.35rem; } .page-sub { font-size: .85rem; }
+  [class*="st-key-card_"] { padding: 16px !important; border-radius: 14px !important; }
+  .kpi { min-height: 0; padding: 14px 16px; } .kpi-value { font-size: 1.45rem; margin-top: 8px; }
+  .periodo { flex-wrap: wrap; gap: 12px; } .periodo-q { margin-left: 0; text-align: left; width: 100%; display: flex; align-items: baseline; gap: 8px; }
+  .periodo-q b { display: inline; font-size: 1.6rem; }
+  .neto { flex-wrap: wrap; } .neto-valor { font-size: 1.3rem; }
+  .pago, .marca { min-height: 0; } .pago-total { font-size: 1.7rem; }
+  .empty { flex-direction: column; text-align: center; padding: 22px 18px; gap: 14px; } .empty img { width: 150px; } .step { justify-content: flex-start; text-align: left; }
+  .crm-head { gap: 12px; } .crm-avatar { width: 54px; height: 54px; font-size: 1.15rem; border-radius: 15px; } .crm-name { font-size: 1.2rem; }
+  .crm-date .r { white-space: normal; text-align: right; }
+  .stApp input, .stApp textarea { font-size: 16px !important; }
+  .footer { margin-top: 24px; }
+}
 </style>
 """
+
 
 
 # =====================================================================
@@ -1011,6 +1263,10 @@ def espacio(px_alto=10):
     md(f"<div style='height:{px_alto}px'></div>")
 
 
+def pie_pagina():
+    md(f"<div class='footer'>{html.escape(aj('empresa_nombre'))} · Suite administrativa · {ahora_sv().strftime('%d/%m/%Y')}</div>")
+
+
 def tabla_sueldo_html(d):
     filas = [("Sueldo bruto", d["bruto_q"], d["bruto_m"], ""),
              (f"(−) Renta {aj('renta_pct'):g}%", d["renta_q"], d["renta_m"], "neg"),
@@ -1044,9 +1300,9 @@ def _ubicar_encabezado(tablas):
     return None
 
 
-def _buscar_columna(columnas, claves, excluir=()):
+def _buscar_columna(columnas_tabla, claves, excluir=()):
     for clave in claves:
-        for c in columnas:
+        for c in columnas_tabla:
             if clave in c and c not in excluir:
                 return c
     return None
@@ -1082,6 +1338,64 @@ def _filas_con_precio(tablas):
     return total
 
 
+def _resumenes_tablas(tablas):
+    """Tablas de resumen que imprime el reporte (por e-commerce, por profesional y por servicio)."""
+    res, actual = {}, None
+    for tabla in tablas:
+        if not tabla:
+            continue
+        if len(tabla[0]) > 4:
+            actual = None
+            continue
+        encabezado = " ".join(_fila_norm(tabla[0]))
+        inicio = 0
+        if "CANTIDAD" in encabezado:
+            if "COMER" in encabezado:
+                actual = "ecomer"
+            elif "PROFESIONAL" in encabezado:
+                actual = "profesional"
+            elif "SERVICIO" in encabezado:
+                actual = "servicio"
+            else:
+                actual = None
+            inicio = 1
+            if actual:
+                res[actual] = {"filas": [], "total": None}
+        if actual is None:
+            continue
+        for fila in tabla[inicio:]:
+            celdas = [_texto(c) for c in fila if _texto(c)]
+            if len(celdas) < 3:
+                continue
+            nombre, cantidad, total = celdas[0], _a_numero(celdas[-2]), _a_numero(celdas[-1])
+            if cantidad is None or total is None:
+                continue
+            if _normalizar(nombre).startswith("TOTAL"):
+                res[actual]["total"] = {"cantidad": int(cantidad), "total": float(total)}
+            else:
+                res[actual]["filas"].append({"nombre": re.sub(r"\s+", " ", nombre), "cantidad": int(cantidad), "total": float(total)})
+    return res
+
+
+def _resumen_general(texto):
+    """'RESUMEN INGRESO GENERAL': total neto, efectivo, transferencia, POS y total con recargo POS."""
+    t = _normalizar(texto)
+    i = t.find("RESUMEN INGRESO GENERAL")
+    if i < 0:
+        i = t.find("TOTAL NETO")
+    if i < 0:
+        return None
+    j = t.find("RESUMEN POR", i + 5)
+    segmento = t[i:(j if j > i else i + 800)]
+    montos = [m for m in (_a_numero(x) for x in re.findall(r"\$\s?\d[\d,]*(?:\.\d+)?", segmento)) if m is not None]
+    if len(montos) < 4:
+        return None
+    general = dict(zip(["total_neto", "efectivo", "transferencia", "pos", "total_con_pos"], montos))
+    if abs(general["efectivo"] + general["transferencia"] + general["pos"] - general["total_neto"]) > 0.05:
+        return None  # orden inesperado: mejor no comparar que comparar mal
+    return general
+
+
 @st.cache_data(show_spinner=False, max_entries=16)
 def extraer_contenido_pdf(pdf_bytes):
     textos, tablas_lineas, tablas_texto = [], [], []
@@ -1091,12 +1405,13 @@ def extraer_contenido_pdf(pdf_bytes):
             textos.append(page.extract_text() or "")
             tablas_lineas.extend(_tablas_pagina(page))
             tablas_texto.extend(_tablas_pagina(page, AJUSTES_TABLA_TEXTO))
-    calidad_lineas = _filas_con_precio(tablas_lineas)
-    calidad_texto = _filas_con_precio(tablas_texto)
-    # Las tablas con bordes son las más confiables; solo se usa la alineación de texto si las primeras fallan.
-    if calidad_lineas == 0 and calidad_texto > 0:
-        return "\n".join(textos), tablas_texto, n_paginas, "texto"
-    return "\n".join(textos), tablas_lineas, n_paginas, "lineas"
+    texto = "\n".join(textos)
+    # Las tablas con bordes son las más confiables; la alineación de texto solo se usa si las primeras fallan.
+    usar_texto = _filas_con_precio(tablas_lineas) == 0 and _filas_con_precio(tablas_texto) > 0
+    resumen = _resumenes_tablas(tablas_lineas)
+    resumen["general"] = _resumen_general(texto)
+    return {"texto": texto, "tablas": tablas_texto if usar_texto else tablas_lineas, "paginas": n_paginas,
+            "estrategia": "texto" if usar_texto else "lineas", "resumen": resumen}
 
 
 def detectar_rango(texto):
@@ -1160,7 +1475,7 @@ def marca_desde_texto(t):
         return "Relájate Man"
     if "GIO" in n or n.startswith("DR"):
         return "Dr. Gio Molina"
-    return _texto(t).title()
+    return nombre_bonito(t)
 
 
 def construir_reporte(texto, tablas, estrategia, mapeo):
@@ -1175,16 +1490,16 @@ def construir_reporte(texto, tablas, estrategia, mapeo):
         return {"ok": False, "meta": meta, "error": "No se encontró la tabla de servicios: falta un encabezado con las columnas PROFESIONAL y PRECIO."}
     ti, fi = pos
 
-    columnas = []
+    cols = []
     for i, c in enumerate(tablas[ti][fi]):
         nombre = _normalizar(c) or f"COLUMNA {i + 1}"
         base, k = nombre, 2
-        while nombre in columnas:
+        while nombre in cols:
             nombre = f"{base} ({k})"
             k += 1
-        columnas.append(nombre)
-    ancho_tabla = len(columnas)
-    meta["columnas"] = columnas
+        cols.append(nombre)
+    ancho_tabla = len(cols)
+    meta["columnas"] = cols
 
     filas, fin_tabla = [], False
     for j, tabla in enumerate(tablas[ti:]):
@@ -1210,22 +1525,26 @@ def construir_reporte(texto, tablas, estrategia, mapeo):
     if not filas:
         return {"ok": False, "meta": meta, "error": "Se encontró el encabezado, pero ninguna fila de servicios debajo."}
 
-    df = pd.DataFrame(filas, columns=columnas)
+    df = pd.DataFrame(filas, columns=cols)
 
     def elegir(clave, claves, excluir=()):
         v = mapeo.get(clave)
-        if v and v in columnas:
+        if v and v in cols:
             return v
-        return _buscar_columna(columnas, claves, excluir) if claves else None
+        return _buscar_columna(cols, claves, excluir)
 
     c_prof = elegir("prof", CLAVES_PROFESIONAL)
     c_pre = elegir("precio", CLAVES_PRECIO, (c_prof,))
     c_cli = elegir("cliente", CLAVES_CLIENTE, (c_prof, c_pre))
     c_ser = elegir("servicio", CLAVES_SERVICIO, (c_prof, c_pre, c_cli))
     c_marca = elegir("marca", CLAVES_MARCA, (c_prof, c_pre, c_cli, c_ser))
-    c_fecha = _buscar_columna(columnas, CLAVES_FECHA, (c_prof, c_pre))
-    c_corr = _buscar_columna(columnas, CLAVES_CORRELATIVO, (c_prof, c_pre, c_cli, c_ser))
-    meta.update({"c_prof": c_prof, "c_pre": c_pre, "c_cli": c_cli, "c_ser": c_ser, "c_marca": c_marca, "c_fecha": c_fecha, "c_corr": c_corr})
+    usadas = (c_prof, c_pre, c_cli, c_ser, c_marca)
+    c_fecha = _buscar_columna(cols, CLAVES_FECHA, usadas)
+    c_corr = _buscar_columna(cols, CLAVES_CORRELATIVO, usadas)
+    c_efe = _buscar_columna(cols, CLAVES_EFECTIVO, usadas)
+    c_tra = _buscar_columna(cols, CLAVES_TRANSFER, usadas)
+    meta.update({"c_prof": c_prof, "c_pre": c_pre, "c_cli": c_cli, "c_ser": c_ser, "c_marca": c_marca,
+                 "c_fecha": c_fecha, "c_corr": c_corr, "c_efe": c_efe, "c_tra": c_tra})
     if not c_prof or not c_pre:
         return {"ok": False, "meta": meta, "error": "No se pudo identificar la columna del profesional o la del precio. Elígelas en el diagnóstico."}
 
@@ -1235,7 +1554,7 @@ def construir_reporte(texto, tablas, estrategia, mapeo):
     encabezado_repetido = prof_norm.str.contains("PROFESIONAL", na=False) | (prof_norm == c_prof)
 
     es_total = pd.Series(False, index=df.index)
-    for c in [c for c in dict.fromkeys([c_prof, c_cli, columnas[0]]) if c]:
+    for c in [c for c in dict.fromkeys([c_prof, c_cli, cols[0]]) if c]:
         es_total = es_total | df[c].map(lambda v: bool(PATRON_TOTAL.match(_normalizar(v))))
     meta["excluidas_total"] = int((es_total & ~encabezado_repetido).sum())
     df = df[~encabezado_repetido & ~es_total].copy()
@@ -1264,9 +1583,17 @@ def construir_reporte(texto, tablas, estrategia, mapeo):
     df[c_prof] = df["_PROF"]
     df[c_pre] = df["_PRECIO"].astype(float)
     df["_PROF_N"] = df["_PROF"].map(_normalizar)
+
+    # Formas de pago: el POS se calcula como precio − efectivo − transferencia (la columna POS sale cortada en el PDF)
+    pagos = bool(c_efe and c_tra)
+    if pagos:
+        df["_EFE"] = df[c_efe].map(_a_numero).fillna(0.0).astype(float)
+        df["_TRA"] = df[c_tra].map(_a_numero).fillna(0.0).astype(float)
+        df["_POS"] = (df[c_pre] - df["_EFE"] - df["_TRA"]).clip(lower=0.0).round(2)
+
     meta["servicios"] = int(len(df))
     return {"ok": True, "df": df, "meta": meta, "c_prof": c_prof, "c_pre": c_pre, "c_cli": c_cli, "c_ser": c_ser,
-            "c_marca": c_marca, "c_fecha": c_fecha, "c_corr": c_corr,
+            "c_marca": c_marca, "c_fecha": c_fecha, "c_corr": c_corr, "pagos": pagos,
             "rango": detectar_rango(texto), "fechas_texto": fechas_del_texto(texto)}
 
 
@@ -1310,7 +1637,7 @@ def aplicar_reporte(rep, quincenas_manual=None):
     ss["periodo_texto"] = texto_periodo
     ss["periodo_info"] = info_p
 
-    # --- Ingresos y marcas (la columna ECOMER del reporte manda; si no existe, se deduce del profesional) ---
+    # --- Ingresos y e-commerce (la columna ECOMER del reporte manda; si no existe, se deduce del profesional) ---
     ss["total_ingresos_pdf"] = float(df_reporte[c_pre].sum())
 
     def asignar_marca(p):
@@ -1377,7 +1704,7 @@ def aplicar_reporte(rep, quincenas_manual=None):
     meta["multiples"] = int((df_reporte["_N_COINC"] > 1).sum())
 
     vacio = pd.Series("", index=df_reporte.index)
-    ss["reporte_df"] = pd.DataFrame({
+    datos = {
         "Profesional": df_reporte[c_prof].values,
         "Colaborador": df_reporte["_COLAB"].replace("", "Sin asignar").values,
         "Marca": df_reporte["MARCA"].values,
@@ -1386,7 +1713,11 @@ def aplicar_reporte(rep, quincenas_manual=None):
         "Servicio": (df_reporte[c_ser].map(_texto) if c_ser else vacio).values,
         "Cliente": (df_reporte[c_cli].map(_texto) if c_cli else vacio).values,
         "Fecha": (fechas_col if fechas_col is not None else pd.Series(pd.NaT, index=df_reporte.index)).values,
-    })
+    }
+    if rep.get("pagos"):
+        datos.update({"Efectivo": df_reporte["_EFE"].values, "Transferencia": df_reporte["_TRA"].values, "POS": df_reporte["_POS"].values})
+    ss["reporte_df"] = pd.DataFrame(datos)
+    ss["pagos_ok"] = bool(rep.get("pagos"))
 
 
 def mapeo_actual():
@@ -1401,12 +1732,6 @@ def mapeo_actual():
             "ffill": bool(ss.get("map_ffill", True))}
 
 
-def cambiar_quincenas():
-    v = st.session_state.get("map_quincenas")
-    st.session_state["quincenas_manual"] = None if v in (None, AUTO) else float(v)
-    reprocesar_pdf()
-
-
 def _reiniciar_datos_pdf():
     ss = st.session_state
     ss["total_ingresos_pdf"] = 0.0
@@ -1416,6 +1741,8 @@ def _reiniciar_datos_pdf():
     ss["reporte_df"] = None
     ss["resumen_pdf"] = {}
     ss["indices_por_colab"] = {}
+    ss["pdf_resumen"] = {}
+    ss["pagos_ok"] = False
     for emp in ss["empleados"].keys():
         ss[f"com_{emp}"] = 0.0
         ss[f"extra_bruto_{emp}"] = 0.0
@@ -1428,11 +1755,13 @@ def ejecutar_procesamiento():
     pdf_bytes = ss.get("pdf_bytes")
     if not pdf_bytes:
         return False, "No hay ningún reporte cargado."
+    resumen_pdf = {}
     try:
-        texto, tablas, n_paginas, estrategia = extraer_contenido_pdf(pdf_bytes)
+        datos = extraer_contenido_pdf(pdf_bytes)
         mapeo = mapeo_actual()
-        rep = construir_reporte(texto, tablas, estrategia, mapeo)
-        rep["meta"]["paginas"] = n_paginas
+        rep = construir_reporte(datos["texto"], datos["tablas"], datos["estrategia"], mapeo)
+        rep["meta"]["paginas"] = datos["paginas"]
+        resumen_pdf = datos.get("resumen") or {}
         if rep["ok"]:
             aplicar_reporte(rep, mapeo.get("quincenas"))
     except Exception as e:
@@ -1443,6 +1772,7 @@ def ejecutar_procesamiento():
         reiniciar_widgets_planilla()
         return False, rep["error"]
     ss["pdf_meta"], ss["pdf_ok"], ss["pdf_error"] = rep["meta"], True, ""
+    ss["pdf_resumen"] = resumen_pdf
     reiniciar_widgets_planilla()
     return True, f"Reporte leído: {rep['meta']['servicios']} servicios · {ss['periodo_texto']}"
 
@@ -1450,6 +1780,12 @@ def ejecutar_procesamiento():
 def reprocesar_pdf():
     ok, msg = ejecutar_procesamiento()
     notificar(msg, "🔄" if ok else "⚠️")
+
+
+def cambiar_quincenas():
+    v = st.session_state.get("map_quincenas")
+    st.session_state["quincenas_manual"] = None if v in (None, AUTO) else float(v)
+    reprocesar_pdf()
 
 
 def recalcular_todo():
@@ -1478,7 +1814,7 @@ def limpiar_reporte_pdf():
 
 
 # =====================================================================
-# 9. PLANILLA
+# 9. PLANILLA Y VERIFICACIÓN CONTRA EL PDF
 # =====================================================================
 def calcular_fila_planilla(emp, info):
     ss = st.session_state
@@ -1489,9 +1825,8 @@ def calcular_fila_planilla(emp, info):
     desc = float(ss.get(f"desc_{emp}", 0.0) or 0.0)
     renta_calculada = 0.0 if "Porcentaje" in info.get("mod", "") and info.get("rol", "") == "Operativo" else round(bruto_base * tasa_renta(), 2)
     t_net = round(bruto_base + com + bonos - renta_calculada - desc, 2)
-    mod = info.get("mod", MOD_FIJO)
     return {
-        "Colaborador": emp, "Rol": info.get("rol", ""), "Modalidad": modalidad_corta(mod),
+        "Colaborador": emp, "Rol": info.get("rol", ""), "Modalidad": forma_pago_texto(info),
         "Servicios": int(ss.get("resumen_pdf", {}).get(emp, {}).get("Servicios", 0)),
         "Ventas PDF": float(ss.get(f"serv_tot_{emp}", 0.0) or 0.0),
         "Base Bruta": bruto_base, "Base Neta": neto_base,
@@ -1518,14 +1853,14 @@ def servicios_colaborador(emp, info):
     extra = (d["Precio"] - umbral).clip(lower=0.0)
     base = {
         "Fecha": d["Fecha"].dt.strftime("%d/%m/%Y").fillna("—"),
-        "Marca": d["Marca"],
+        "E-commerce": d["Marca"],
         "Cliente": d["Cliente"].replace("", "—"),
         "Servicio": d["Servicio"].replace("", "—"),
         "Precio": d["Precio"].astype(float),
     }
     if info.get("rol", "") == "Operativo" and "Estándar" in info.get("mod", ""):
         base.update({"Extra bruto": extra.astype(float), "Retención pauta": (extra * pauta).astype(float), "Comisión neta": (extra - extra * pauta).astype(float)})
-    elif info.get("rol", "") == "Operativo":
+    elif info.get("rol", "") == "Operativo" and float(info.get("porc", 0) or 0) > 0:
         base["Comisión neta"] = (d["Precio"] * (float(info.get("porc", 20) or 0) / 100.0)).astype(float)
     return pd.DataFrame(base).reset_index(drop=True)
 
@@ -1534,7 +1869,7 @@ def tarjeta_pago_html(f, info):
     ss = st.session_state
     q = ss["quincenas_multiplicador"]
     mod = info.get("mod", MOD_FIJO)
-    sub = f"{f['Modalidad']} · {f['Servicios']} servicio(s)" if ss.get("pdf_ok") else f"{f['Modalidad']} · {info.get('rol', '')}"
+    sub = f"{forma_pago_texto(info)} · {f['Servicios']} servicio(s)" if ss.get("pdf_ok") else f"{forma_pago_texto(info)} · {info.get('rol', '')}"
     lineas = []
     if "Porcentaje" in mod:
         lineas.append((f"Comisión {float(info.get('porc', 0) or 0):g}% de {usd(f['Ventas PDF'])}", usd(f["Com Neta"]), "pos"))
@@ -1557,6 +1892,76 @@ def tarjeta_pago_html(f, info):
             f"<div><div class='pago-nom'>{html.escape(f['Colaborador'])}</div><div class='pago-sub'>{html.escape(sub)}</div></div></div>"
             f"<div class='pago-total'>{usd(f['Total'])}</div><div class='pago-lbl'>Total a pagar</div>"
             f"<div class='pago-lines'>{lineas_html}</div></div>")
+
+
+def calcular_cuadre():
+    """Compara lo que suma la app con los totales que imprime el propio PDF."""
+    ss = st.session_state
+    rep = ss.get("reporte_df")
+    res = ss.get("pdf_resumen") or {}
+    if rep is None or rep.empty:
+        return None
+    filas = []
+
+    def agregar(grupo, concepto, app, pdf, tipo="dinero"):
+        if pdf is None:
+            return
+        app, pdf = float(app), float(pdf)
+        dif = round(app - pdf, 2)
+        ok = abs(dif) < 0.015 if tipo == "dinero" else int(round(app)) == int(round(pdf))
+        filas.append({"grupo": grupo, "concepto": concepto, "app": app, "pdf": pdf, "dif": dif, "tipo": tipo, "ok": ok})
+
+    gen = res.get("general") or {}
+    agregar("General", "Total de ventas", rep["Precio"].sum(), gen.get("total_neto"))
+    total_resumen = (res.get("ecomer") or {}).get("total") or (res.get("profesional") or {}).get("total") or {}
+    agregar("General", "Cantidad de servicios", len(rep), total_resumen.get("cantidad"), "cantidad")
+    if ss.get("pagos_ok") and gen:
+        agregar("Formas de pago", "Efectivo", rep["Efectivo"].sum(), gen.get("efectivo"))
+        agregar("Formas de pago", "Transferencia", rep["Transferencia"].sum(), gen.get("transferencia"))
+        agregar("Formas de pago", "POS (tarjeta)", rep["POS"].sum(), gen.get("pos"))
+    for f in (res.get("ecomer") or {}).get("filas", []):
+        marca = marca_desde_texto(f["nombre"]) or f["nombre"]
+        sub = rep[rep["Marca"] == marca]
+        agregar("E-commerce", f"{marca} · ventas", sub["Precio"].sum(), f["total"])
+        agregar("E-commerce", f"{marca} · servicios", len(sub), f["cantidad"], "cantidad")
+    claves_prof = rep["Profesional"].map(_clave_nombre)
+    for f in (res.get("profesional") or {}).get("filas", []):
+        sub = rep[claves_prof == _clave_nombre(f["nombre"])]
+        nombre = nombre_bonito(f["nombre"])
+        agregar("Profesional", f"{nombre} · ventas", sub["Precio"].sum(), f["total"])
+        agregar("Profesional", f"{nombre} · servicios", len(sub), f["cantidad"], "cantidad")
+    recargo = None
+    if gen.get("total_con_pos") is not None and gen.get("total_neto") is not None:
+        recargo = round(gen["total_con_pos"] - gen["total_neto"], 2)
+    return {"filas": filas, "ok": sum(1 for f in filas if f["ok"]), "total": len(filas), "recargo_pos": recargo}
+
+
+def render_cuadre(expandido=False):
+    c = calcular_cuadre()
+    if not c:
+        return
+    if not c["total"]:
+        md("<div class='chips'>" + chip("ℹ️ Este PDF no trae resúmenes para comparar; se usan solo los servicios leídos.") + "</div>")
+        return
+    if c["ok"] == c["total"]:
+        estado = chip(f"✅ Todo cuadra con el PDF · {c['ok']} de {c['total']} verificaciones", "green")
+    else:
+        estado = chip(f"⚠️ {c['total'] - c['ok']} diferencia(s) con el PDF · revisa el detalle", "amber")
+    extra = chip(f"💳 Recargo POS según el PDF: {usd(c['recargo_pos'])}", "sky") if c["recargo_pos"] else ""
+    md(f"<div class='chips'>{estado}{extra}</div>")
+    with st.expander("🔎 Verificación detallada contra el PDF", expanded=expandido):
+        def formato(valor, tipo):
+            return usd(valor) if tipo == "dinero" else f"{int(round(valor))}"
+
+        tabla = pd.DataFrame([{
+            "Grupo": f["grupo"], "Concepto": f["concepto"],
+            "Según la app": formato(f["app"], f["tipo"]), "Según el PDF": formato(f["pdf"], f["tipo"]),
+            "Diferencia": "" if f["ok"] else (usd(f["dif"]) if f["tipo"] == "dinero" else f"{int(round(f['dif'])):+d}"),
+            "Estado": "✅ Cuadra" if f["ok"] else "⚠️ Revisar",
+        } for f in c["filas"]])
+        st.dataframe(tabla, hide_index=True, **ancho(st.dataframe))
+        st.caption("La app suma cada servicio leído y lo compara con los totales que imprime el propio reporte. Si algo no cuadra, revisa el diagnóstico de lectura.")
+
 
 
 # =====================================================================
@@ -1618,16 +2023,16 @@ def grafico_colaboradores(ventas):
     return estilo_plotly(fig, max(260, 50 * len(df) + 60))
 
 
-def grafico_top_servicios(df):
+def grafico_top_servicios(df, color=None):
     d = df[df["Servicio"].str.strip() != ""]
     top = (d.groupby("Servicio").agg(Ingresos=("Precio", "sum"), Cantidad=("Precio", "size")).sort_values("Ingresos", ascending=False).head(8).sort_values("Ingresos").reset_index())
-    top["Etiqueta"] = top["Servicio"].map(lambda s: s if len(s) <= 30 else s[:29] + "…")
+    top["Etiqueta"] = top["Servicio"].map(lambda s: s if len(s) <= 28 else s[:27] + "…")
     fig = px.bar(top, x="Ingresos", y="Etiqueta", orientation="h", custom_data=["Servicio", "Cantidad"])
-    fig.update_traces(marker_color=tema()["p"], marker_line_width=0, texttemplate="$%{x:,.0f}", textposition="outside", textfont=dict(color="#334155"),
+    fig.update_traces(marker_color=color or tema()["p"], marker_line_width=0, texttemplate="$%{x:,.0f}", textposition="outside", textfont=dict(color="#334155"),
                       cliponaxis=False, hovertemplate="<b>%{customdata[0]}</b><br>Ingresos: $%{x:,.2f}<br>Servicios: %{customdata[1]}<extra></extra>")
     fig.update_layout(bargap=0.38, showlegend=False)
     _ejes_dinero_h(fig)
-    return estilo_plotly(fig, max(260, 46 * len(top) + 60))
+    return estilo_plotly(fig, max(240, 46 * len(top) + 60))
 
 
 def grafico_tendencia(df):
@@ -1641,16 +2046,56 @@ def grafico_tendencia(df):
     return estilo_plotly(fig, 300)
 
 
+def grafico_pagos_marcas(rep, marcas):
+    filas = []
+    for m in marcas:
+        sub = rep[rep["Marca"] == m]
+        for metodo in COLORES_PAGO:
+            filas.append({"E-commerce": m, "Forma de pago": metodo, "Monto": float(sub[metodo].sum())})
+    fig = px.bar(pd.DataFrame(filas), y="E-commerce", x="Monto", color="Forma de pago", orientation="h", barmode="stack",
+                 color_discrete_map=COLORES_PAGO, category_orders={"E-commerce": marcas, "Forma de pago": list(COLORES_PAGO)})
+    fig.update_traces(hovertemplate="<b>%{y}</b><br>%{fullData.name}: $%{x:,.2f}<extra></extra>", marker_line_width=2, marker_line_color="#FFFFFF")
+    fig.update_layout(bargap=0.35)
+    _ejes_dinero_h(fig)
+    fig.update_yaxes(autorange="reversed")
+    return estilo_plotly(fig, max(260, 74 * len(marcas) + 90))
+
+
+def grafico_tendencia_marcas(rep, marcas):
+    d = rep.dropna(subset=["Fecha"]).groupby(["Fecha", "Marca"])["Precio"].sum().reset_index()
+    fig = go.Figure()
+    for m in marcas:
+        s = d[d["Marca"] == m].sort_values("Fecha")
+        if s.empty:
+            continue
+        fig.add_trace(go.Scatter(x=s["Fecha"], y=s["Precio"], name=m, mode="lines+markers",
+                                 line=dict(color=COLORES_MARCA.get(m, "#94A3B8"), width=2),
+                                 marker=dict(size=7, color=COLORES_MARCA.get(m, "#94A3B8"), line=dict(color="#FFFFFF", width=1.5)),
+                                 hovertemplate="%{fullData.name}: $%{y:,.2f}<extra></extra>"))
+    fig.update_layout(hovermode="x unified")
+    fig.update_xaxes(title=None, showgrid=False, tickformat="%d/%m", tickfont=dict(color="#64748B"), linecolor="#CBD5E1")
+    fig.update_yaxes(title=None, gridcolor="#EEF2F7", zeroline=False, tickprefix="$", tickformat=",.0f", tickfont=dict(color="#64748B"))
+    return estilo_plotly(fig, 320)
+
+
 # =====================================================================
 # 11. DOCUMENTOS PDF
 # =====================================================================
 def _encabezado_pdf(pdf, subtitulo, color=(10, 25, 47), linea_extra=None):
-    if os.path.exists(logo_path): pdf.image(logo_path, 10, 8, 25); pdf.set_x(40)
+    con_logo = False
+    logo = logo_bytes()
+    if logo:
+        try:
+            pdf.image(io.BytesIO(logo), 10, 8, 25)
+            con_logo = True
+        except Exception:
+            con_logo = False
+    if con_logo: pdf.set_x(40)
     pdf.set_font('helvetica', 'B', 16); pdf.set_text_color(*color); pdf.cell(0, 10, limpiar_texto_pdf(aj("empresa_nombre")), 0, 1, 'L')
-    if os.path.exists(logo_path): pdf.set_x(40)
+    if con_logo: pdf.set_x(40)
     pdf.set_font('helvetica', '', 10); pdf.set_text_color(100, 100, 100); pdf.cell(0, 5, limpiar_texto_pdf(subtitulo), 0, 1, 'L')
     if linea_extra:
-        if os.path.exists(logo_path): pdf.set_x(40)
+        if con_logo: pdf.set_x(40)
         pdf.cell(0, 5, limpiar_texto_pdf(linea_extra), 0, 1, 'L')
     pdf.ln(5)
 
@@ -1661,7 +2106,7 @@ def generar_recibo_pdf(e_dat, periodo_texto):
             _encabezado_pdf(self, 'Comprobante Oficial de Pago', linea_extra=f"Periodo Liquidado: {periodo_texto}")
 
     pdf = PDF(); pdf.add_page(); pdf.set_font('helvetica', 'B', 11); pdf.set_fill_color(243, 244, 246)
-    pdf.cell(0, 10, limpiar_texto_pdf(f" Colaborador: {e_dat['Colaborador']}"), 0, 1, 'L', fill=True); pdf.ln(5)
+    pdf.cell(0, 10, limpiar_texto_pdf(f" Colaborador: {e_dat['Colaborador']}  ·  {e_dat['Modalidad']}"), 0, 1, 'L', fill=True); pdf.ln(5)
 
     pdf.set_font('helvetica', '', 9); pdf.set_text_color(80, 80, 80)
     txt_banco = f"DUI: {e_dat['DUI']} | Cuenta a Depositar: {e_dat['Cuenta']}" if e_dat['DUI'] or e_dat['Cuenta'] else "Datos bancarios no registrados"
@@ -1708,11 +2153,11 @@ def generar_planilla_pdf(filas, periodo_texto):
     pdf = PDFPlanilla(orientation="L", unit="mm", format="A4")
     pdf.set_auto_page_break(True, 16)
     pdf.add_page()
-    columnas = [("Colaborador", 58, "L", "Colaborador"), ("Modalidad", 26, "L", "Modalidad"), ("Serv.", 14, "R", "Servicios"),
-                ("Ventas", 26, "R", "Ventas PDF"), ("Sueldo neto", 26, "R", "Base Neta"), ("Comisión", 26, "R", "Com Neta"),
-                ("Bonos", 22, "R", "Bonos"), ("Desc.", 22, "R", "Desc"), ("Renta", 22, "R", "Renta"), ("Total a pagar", 32, "R", "Total")]
+    especificacion = [("Colaborador", 56, "L", "Colaborador"), ("Forma de pago", 32, "L", "Modalidad"), ("Serv.", 12, "R", "Servicios"),
+                      ("Ventas", 26, "R", "Ventas PDF"), ("Sueldo neto", 26, "R", "Base Neta"), ("Comisión", 26, "R", "Com Neta"),
+                      ("Bonos", 20, "R", "Bonos"), ("Desc.", 20, "R", "Desc"), ("Renta", 22, "R", "Renta"), ("Total a pagar", 32, "R", "Total")]
     pdf.set_font('helvetica', 'B', 9); pdf.set_fill_color(10, 25, 47); pdf.set_text_color(255, 255, 255)
-    for titulo, w, al, _ in columnas:
+    for titulo, w, al, _ in especificacion:
         pdf.cell(w, 8, limpiar_texto_pdf(f" {titulo} "), 1, 0, al, fill=True)
     pdf.ln()
     pdf.set_font('helvetica', '', 9); pdf.set_text_color(40, 40, 40)
@@ -1725,12 +2170,15 @@ def generar_planilla_pdf(filas, periodo_texto):
         return f"${float(valor):,.2f} "
 
     for i, f in enumerate(filas):
-        pdf.set_fill_color(248, 250, 252) if i % 2 else pdf.set_fill_color(255, 255, 255)
-        for _, w, al, clave in columnas:
+        if i % 2:
+            pdf.set_fill_color(248, 250, 252)
+        else:
+            pdf.set_fill_color(255, 255, 255)
+        for _, w, al, clave in especificacion:
             pdf.cell(w, 7, celda(f[clave], clave), 1, 0, al, fill=True)
         pdf.ln()
     pdf.set_font('helvetica', 'B', 9); pdf.set_fill_color(238, 242, 255)
-    for _, w, al, clave in columnas:
+    for _, w, al, clave in especificacion:
         if clave == "Colaborador":
             texto = " TOTAL"
         elif clave == "Modalidad":
@@ -1823,14 +2271,12 @@ def enviar_documento(destinatario, asunto, cuerpo, pdf_bytes, nombre_adjunto):
 
 def bloque_envio_documento(prefijo, emp, pdf_bytes, nombre_pdf, asunto, cuerpo, tipo_auditoria):
     """Descargar el PDF o enviarlo al correo del colaborador (editable)."""
-    b1, b2, b3 = st.columns([1, 1.6, 1])
+    b1, b2, b3 = columnas([1, 1.6, 1], "bottom")
     with b1:
-        espacio(28)
         st.download_button("⬇️ Descargar PDF", data=pdf_bytes, file_name=nombre_pdf, mime="application/pdf", key=f"{prefijo}_dl", **ancho(st.download_button))
     with b2:
         correo = st.text_input("Enviar al correo", value=correo_de(emp), key=f"{prefijo}_correo_{nombre_archivo('', emp)}", placeholder="nombre@correo.com")
     with b3:
-        espacio(28)
         enviar = st.button("📨 Enviar por correo", key=f"{prefijo}_enviar", type="primary", disabled=not correo_valido(correo), **ancho(st.button))
     if not correo_valido(correo):
         st.caption("Escribe un correo válido para habilitar el envío. Puedes guardar el correo del colaborador en Configuración → Personal y sueldos.")
@@ -2013,7 +2459,7 @@ def render_perfil_proveedor(p, idx):
         if _texto(p.get("ID_Proveedor")):
             chips += chip(f"# ID {_esc(p.get('ID_Proveedor'))}", "indigo")
         desc = _esc(p.get("Descripcion")) or "Sin descripción registrada"
-        h1, h2 = st.columns([4.2, 1.4])
+        h1, h2 = columnas([4.2, 1.4], "center")
         with h1:
             md(f"<div class='crm-head'><div class='crm-avatar'>{html.escape(_iniciales(nombre))}</div><div><div class='crm-kicker'>Proveedor</div>"
                f"<div class='crm-name'>{html.escape(nombre)}</div><div class='crm-desc'>{desc}</div><div class='chips' style='margin-top:10px'>{chips}</div></div></div>")
@@ -2044,7 +2490,7 @@ def render_perfil_proveedor(p, idx):
     c1, c2, c3 = st.columns(3)
     with c1:
         with tarjeta("prov_contacto"):
-            md(crm_seccion("Información de contacto", "#4F46E5") + crm_campo("👤", "Contacto", p.get("Nombre_Contacto"))
+            md(crm_seccion("Información de contacto", tema()["p"]) + crm_campo("👤", "Contacto", p.get("Nombre_Contacto"))
                + crm_campo("📞", "Teléfono", p.get("Telefono_1"), "telefono") + crm_campo("📧", "Correo electrónico", p.get("Correo"), "correo")
                + crm_campo("📍", "Dirección", p.get("Direccion_1")) + crm_campo("🏙️", "Ciudad / Dirección 2", p.get("Direccion_2")) + crm_campo("🌎", "País", p.get("Pais")))
     with c2:
@@ -2073,7 +2519,7 @@ def render_perfil_proveedor(p, idx):
 
 
 # =====================================================================
-# 14. CONFIGURACIÓN: PERSONAL Y AJUSTES (callbacks)
+# 14. PERSONAL, FORMA DE PAGO Y AJUSTES (callbacks)
 # =====================================================================
 def actualizar_ajuste(clave, widget_key, recalcular=False):
     ss = st.session_state
@@ -2091,6 +2537,11 @@ def restaurar_reglas():
     notificar("Reglas oficiales restauradas: extra sobre $60, pauta 25% y renta 10%.", "↩️")
 
 
+def quitar_logo():
+    st.session_state["ajustes"]["logo_b64"] = ""
+    notificar("Logo quitado. Recuerda guardar los ajustes en Google Sheets.", "🖼️")
+
+
 def _aplicar_cambios_personal(nuevos, recalcular=(), guardar=True):
     ss = st.session_state
     ss["empleados"] = nuevos
@@ -2099,12 +2550,44 @@ def _aplicar_cambios_personal(nuevos, recalcular=(), guardar=True):
     inicializar_empleados()
     for emp, info in nuevos.items():
         ss[f"email_{emp}"] = _texto(info.get("correo"))
-        ss.pop(f"ui_e_{emp}", None)
+        for clave in (f"ui_e_{emp}", f"fp_mod_{emp}", f"fp_porc_{emp}"):
+            ss.pop(clave, None)
     reiniciar_widgets_planilla()
     if ss.get("pdf_bytes"):
         ejecutar_procesamiento()
     ss["nonce_editor_personal"] += 1
     return guardar_empleados(nuevos) if guardar else True
+
+
+def aplicar_forma_pago(emp):
+    """Cambio rápido de forma de pago y porcentaje desde Planillas (se guarda en el personal)."""
+    ss = st.session_state
+    info = dict(ss["empleados"].get(emp) or {})
+    if not info:
+        return
+    mod = ss.get(f"fp_mod_{emp}", info.get("mod"))
+    if mod not in MODALIDADES:
+        return
+    info["mod"] = mod
+    if mod == MOD_PORCENTAJE or (mod == MOD_FIJO and info.get("rol") == "Operativo"):
+        porc = float(ss.get(f"fp_porc_{emp}", info.get("porc", 0)) or 0.0)
+        if mod == MOD_PORCENTAJE and porc <= 0:
+            notificar_error(f"Indica un porcentaje mayor a 0% para {emp}.")
+            return
+        info["porc"] = min(max(porc, 0.0), 100.0)
+    elif mod == MOD_FIJO:
+        info["porc"] = 0.0
+    aviso = ""
+    if mod != MOD_PORCENTAJE and sueldo_neto_de(info) <= 0:
+        info["sueldo_base_neto"] = neto_q_desde_bruto_mensual(aj("salario_minimo"))
+        aviso = " Se le asignó el salario mínimo como sueldo base; ajústalo en Configuración si es otro."
+    nuevos = {k: (info if k == emp else v) for k, v in ss["empleados"].items()}
+    ok = _aplicar_cambios_personal(nuevos, recalcular=(emp,))
+    ss["fe_recargar"] = True
+    if ok:
+        notificar(f"{emp}: ahora cobra {forma_pago_texto(info)}. Planilla recalculada.{aviso}", "✅")
+    else:
+        notificar_error(f"El cambio de {emp} quedó en esta sesión, pero no se pudo guardar en Google Sheets.{aviso}")
 
 
 def cargar_form_empleado():
@@ -2120,10 +2603,19 @@ def cargar_form_empleado():
     ss["fe_porc"] = float(min(100.0, max(0.0, 20.0 if porc is None else porc)))
     ss["fe_modo_sueldo"] = MODO_NETO_Q
     ss["fe_modo_prev"] = MODO_NETO_Q
-    ss["fe_sueldo"] = float(max(0.0, neto_q_desde_bruto_mensual(aj("salario_minimo")) if nuevo else sueldo_neto_de(info)))
+    ss["fe_sueldo"] = float(max(0.0, neto_q_desde_bruto_mensual(aj("salario_minimo")) if nuevo or sueldo_neto_de(info) <= 0 else sueldo_neto_de(info)))
     for campo in ("alias",) + CAMPOS_EXTRA_EMPLEADO:
         ss[f"fe_{campo}"] = _texto(info.get(campo))
     ss["fe_confirmar_borrar"] = False
+
+
+def cambio_forma_pago_form():
+    ss = st.session_state
+    mod = ss.get("fe_mod")
+    if mod == MOD_PORCENTAJE and float(ss.get("fe_porc") or 0) <= 0:
+        ss["fe_porc"] = 20.0
+    elif mod == MOD_FIJO:
+        ss["fe_porc"] = 0.0
 
 
 def convertir_modo_sueldo():
@@ -2149,7 +2641,7 @@ def usar_salario_minimo():
 def neto_q_formulario():
     ss = st.session_state
     valor = float(ss.get("fe_sueldo") or 0.0)
-    return round(valor, 2) if ss.get("fe_modo_sueldo") == MODO_NETO_Q else neto_q_desde_bruto_mensual(valor)
+    return round(valor, 2) if ss.get("fe_modo_sueldo", MODO_NETO_Q) == MODO_NETO_Q else neto_q_desde_bruto_mensual(valor)
 
 
 def guardar_form_empleado():
@@ -2157,6 +2649,7 @@ def guardar_form_empleado():
     nombre = _texto(ss.get("fe_nombre"))
     sel = ss.get("fe_sel", NUEVO_EMP)
     es_nuevo = sel not in ss["empleados"]
+    previo = {} if es_nuevo else ss["empleados"][sel]
     if not nombre:
         notificar_error("Escribe el nombre del colaborador antes de guardar.")
         return
@@ -2167,10 +2660,26 @@ def guardar_form_empleado():
     if correo and not correo_valido(correo):
         notificar_error(f"El correo «{correo}» no es válido.")
         return
+    mod = ss.get("fe_mod") if ss.get("fe_mod") in MODALIDADES else MOD_ESTANDAR
+    rol = ss.get("fe_rol") if ss.get("fe_rol") in ROLES else "Operativo"
+    if mod == MOD_PORCENTAJE or (mod == MOD_FIJO and rol == "Operativo"):
+        porc = float(ss.get("fe_porc") or 0.0)
+    elif mod == MOD_FIJO:
+        porc = 0.0
+    else:
+        porc_previo = _a_numero(previo.get("porc"))
+        porc = 20.0 if porc_previo is None else porc_previo
+    if mod == MOD_PORCENTAJE and porc <= 0:
+        notificar_error("Indica el porcentaje de comisión (entre 1% y 100%).")
+        return
+    if mod == MOD_PORCENTAJE:
+        sueldo = sueldo_neto_de(previo) if previo else 0.0  # se conserva por si vuelve a tener sueldo base
+    else:
+        sueldo = neto_q_formulario() if "fe_sueldo" in ss else sueldo_neto_de(previo)
     info = _empleado_normalizado({
-        "rol": ss.get("fe_rol"), "mod": ss.get("fe_mod"), "porc": ss.get("fe_porc"), "alias": ss.get("fe_alias"),
-        "sueldo_base_neto": neto_q_formulario(), "cargo": ss.get("fe_cargo"), "correo": correo, "telefono": ss.get("fe_telefono"),
-        "dui": ss.get("fe_dui"), "banco": ss.get("fe_banco"), "cuenta": ss.get("fe_cuenta"), "fecha_ingreso": ss.get("fe_fecha_ingreso"),
+        "rol": rol, "mod": mod, "porc": porc, "alias": ss.get("fe_alias"), "sueldo_base_neto": sueldo,
+        "cargo": ss.get("fe_cargo"), "correo": correo, "telefono": ss.get("fe_telefono"), "dui": ss.get("fe_dui"),
+        "banco": ss.get("fe_banco"), "cuenta": ss.get("fe_cuenta"), "fecha_ingreso": ss.get("fe_fecha_ingreso"),
     })
     if es_nuevo:
         nuevos = dict(ss["empleados"])
@@ -2187,7 +2696,7 @@ def guardar_form_empleado():
     ss["fe_sel"] = nombre
     cargar_form_empleado()
     if ok:
-        notificar(f"Colaborador «{nombre}» guardado. Planilla recalculada.", "✅")
+        notificar(f"«{nombre}» guardado: {forma_pago_texto(info)}. Planilla recalculada.", "✅")
     else:
         notificar_error("Los cambios del colaborador quedaron en esta sesión, pero no se pudieron guardar en Google Sheets.")
 
@@ -2218,22 +2727,59 @@ def eliminar_empleado():
         notificar_error(f"«{sel}» se eliminó de la sesión, pero no se pudo actualizar Google Sheets.")
 
 
-# =====================================================================
-# 15. ESTILOS + MENÚ LATERAL
-# =====================================================================
 def ir_a(pagina):
     st.session_state["pagina"] = pagina
 
 
+def ir_a_movil():
+    v = st.session_state.get("nav_movil_sel")
+    if v in PAGINAS_VALIDAS:
+        st.session_state["pagina"] = v
+
+
+PLANTILLA_SECRETS = """# Streamlit Cloud → tu app → ⋮ → Settings → Secrets  (o el archivo .streamlit/secrets.toml en tu PC)
+EMAIL_USER = "tucorreo@gmail.com"
+EMAIL_PASS = "abcd efgh ijkl mnop"   # contraseña de aplicación de Gmail (16 letras)
+
+[gsheets]
+url = "https://docs.google.com/spreadsheets/d/TU_ID_DE_HOJA/edit"
+
+[gcp_service_account]   # copia aquí los datos del archivo JSON de la cuenta de servicio
+type = "service_account"
+project_id = "tu-proyecto"
+private_key_id = "..."
+private_key = "-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"
+client_email = "gio-group@tu-proyecto.iam.gserviceaccount.com"
+client_id = "..."
+auth_uri = "https://accounts.google.com/o/oauth2/auth"
+token_uri = "https://oauth2.googleapis.com/token"
+auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
+client_x509_cert_url = "..."
+"""
+
+GUIA_CONEXION_HTML = (
+    "<div class='guia'><ol>"
+    "<li><b>Crea la hoja de cálculo.</b> En Google Sheets crea un archivo nuevo (por ejemplo «Gio Group · Base de datos») y copia su enlace.</li>"
+    "<li><b>Crea un proyecto en Google Cloud.</b> Entra a <code>console.cloud.google.com</code>, crea un proyecto y en «APIs y servicios → Biblioteca» habilita <b>Google Sheets API</b> y <b>Google Drive API</b>.</li>"
+    "<li><b>Crea la cuenta de servicio.</b> En «IAM y administración → Cuentas de servicio» crea una cuenta, entra en ella, abre «Claves → Agregar clave → JSON» y guarda el archivo que se descarga (no lo compartas).</li>"
+    "<li><b>Comparte la hoja.</b> En tu hoja de cálculo pulsa «Compartir» y agrega el correo de la cuenta de servicio (termina en <code>iam.gserviceaccount.com</code>) como <b>Editor</b>.</li>"
+    "<li><b>Prepara Gmail.</b> Activa la verificación en dos pasos de tu cuenta y crea una «Contraseña de aplicación»: esas 16 letras van en <code>EMAIL_PASS</code>.</li>"
+    "<li><b>Pega los secretos.</b> En Streamlit Cloud abre tu app → ⋮ → <b>Settings → Secrets</b>, pega la plantilla de abajo con tus datos y guarda. Nunca subas estos datos a GitHub.</li>"
+    "<li><b>Conecta y prepara.</b> Vuelve aquí, pulsa «Reintentar conexión» y luego «Preparar hoja de cálculo»: la app crea las pestañas Personal, Proveedores, Ajustes, Auditoria e Historial_Planillas.</li>"
+    "</ol></div>"
+)
+
+
+
+# =====================================================================
+# 15. ESTILOS + MENÚ LATERAL + NAVEGACIÓN EN TELÉFONO
+# =====================================================================
 md(css_tema() + CSS_BASE)
 mostrar_notificaciones()
 
 with st.sidebar:
-    if os.path.exists(logo_path):
-        st.image(logo_path, **ancho(st.image))
-    else:
-        md(f"<div class='brand'><img src='{img_logo()}' alt=''/><div><div class='brand-name'>{html.escape(aj('empresa_corto'))}</div><div class='brand-sub'>Suite administrativa</div></div></div>")
-
+    md(f"<div class='brand'><img src='{img_logo()}' alt=''/><div><div class='brand-name'>{html.escape(aj('empresa_corto'))}</div>"
+       "<div class='brand-sub'>Suite administrativa</div></div></div>")
     for seccion, items in MENU:
         md(f"<div class='nav-sec'>{seccion}</div>")
         with zona(f"nav_{_normalizar(seccion).lower()}"):
@@ -2253,7 +2799,24 @@ with st.sidebar:
        f"<div class='side-row'><span>Período</span><b>{periodo_side}</b></div>"
        f"<div class='side-row'><span>Quincenas a pagar</span><b>{st.session_state['quincenas_multiplicador']:g}</b></div>"
        f"<div class='side-row'><span>Colaboradores</span><b>{len(st.session_state['empleados'])}</b></div></div>")
-    md("<div class='profile'><div class='avatar'>AD</div><div><div class='profile-name'>Administración</div><div class='profile-role'>Gerencia General</div></div></div>")
+    md("<div class='profile'><div class='avatar'>AD</div><div><div class='profile-name'>Administración</div><div class='profile-role'>Gerencia General</div></div></div>"
+       "<div class='version'>Suite administrativa · v4</div>")
+
+
+def nav_movil():
+    """En el teléfono el menú lateral queda oculto: esta barra permite cambiar de sección sin abrirlo."""
+    ss = st.session_state
+    with zona("navmovil"):
+        ss["nav_movil_sel"] = ss["pagina"]
+        if hasattr(st, "pills"):
+            st.pills("Ir a", PAGINAS_VALIDAS, key="nav_movil_sel", format_func=lambda p: ETIQUETAS_PAGINA.get(p, p),
+                     on_change=ir_a_movil, label_visibility="collapsed")
+        else:
+            st.selectbox("Ir a", PAGINAS_VALIDAS, key="nav_movil_sel", format_func=lambda p: ETIQUETAS_PAGINA.get(p, p),
+                         on_change=ir_a_movil, label_visibility="collapsed")
+
+
+nav_movil()
 
 
 # =====================================================================
@@ -2272,7 +2835,7 @@ def hero_dashboard():
     chips += f"<span class='hero-chip'>👥 {len(ss['empleados'])} colaboradores</span>"
     md(f"<div class='hero'><div class='hero-body'><div class='hero-kicker'>{fecha}</div><div class='hero-title'>{saludo}, Gerencia</div>"
        f"<div class='hero-sub'>El pulso de {html.escape(aj('empresa_corto'))} en una sola vista: ingresos, planilla y rentabilidad del período, calculados directamente desde el reporte de ventas.</div>"
-       f"<div class='hero-chips'>{chips}</div></div><img class='hero-img' src='{IMG_HERO}' alt=''/></div>")
+       f"<div class='hero-chips'>{chips}</div></div><img class='hero-img' src='{img_hero()}' alt=''/></div>")
 
 
 def panel_diagnostico():
@@ -2295,18 +2858,19 @@ def panel_diagnostico():
             chips += chip(f"⚠️ {meta['sin_profesional']} filas sin profesional ({usd(meta.get('monto_sin_profesional', 0))})", "amber")
         if meta.get("periodo_fuente"):
             chips += chip(f"📅 Período tomado de: {meta['periodo_fuente']}", "indigo")
+        chips += chip("💳 Formas de pago leídas" if ss.get("pagos_ok") else "💳 Sin columnas de forma de pago", "green" if ss.get("pagos_ok") else "")
         md(f"<div class='chips'>{chips}</div>")
 
-        columnas = meta.get("columnas") or []
-        if columnas:
+        cols_pdf = meta.get("columnas") or []
+        if cols_pdf:
             md(titulo_seccion("Columnas del reporte", "Se detectan solas. Si alguna no es la correcta, elígela aquí y todo se recalcula."))
-            opciones = [AUTO] + columnas
+            opciones = [AUTO] + cols_pdf
             a, b, c, d, e = st.columns(5)
             a.selectbox("👤 Profesional", opciones, key="map_prof", on_change=reprocesar_pdf, help=f"Detectada: {meta.get('c_prof') or '—'}")
             b.selectbox("💲 Precio", opciones, key="map_precio", on_change=reprocesar_pdf, help=f"Detectada: {meta.get('c_pre') or '—'}")
             c.selectbox("🙍 Cliente", opciones, key="map_cliente", on_change=reprocesar_pdf, help=f"Detectada: {meta.get('c_cli') or '—'}")
             d.selectbox("💆 Servicio", opciones, key="map_servicio", on_change=reprocesar_pdf, help=f"Detectada: {meta.get('c_ser') or '—'}")
-            e.selectbox("🏷️ Marca (e-comer)", opciones, key="map_marca", on_change=reprocesar_pdf, help=f"Detectada: {meta.get('c_marca') or '—'}")
+            e.selectbox("🏪 E-commerce", opciones, key="map_marca", on_change=reprocesar_pdf, help=f"Detectada: {meta.get('c_marca') or '—'}")
             st.checkbox("Asignar filas sin nombre al profesional de arriba (reportes agrupados)", value=True, key="map_ffill", on_change=reprocesar_pdf)
 
         if ss.get("resumen_pdf"):
@@ -2321,7 +2885,8 @@ def panel_diagnostico():
             st.warning(f"{meta['multiples']} servicio(s) coinciden con más de un colaborador: revisa que los alias no se repitan.")
         if ss.get("reporte_df") is not None:
             md(titulo_seccion("Vista previa de servicios leídos"))
-            st.dataframe(ss["reporte_df"].head(25).style.format({"Precio": "${:,.2f}", "Extra": "${:,.2f}"}), hide_index=True, **ancho(st.dataframe))
+            formatos = {c: "${:,.2f}" for c in ("Precio", "Extra", "Efectivo", "Transferencia", "POS") if c in ss["reporte_df"].columns}
+            st.dataframe(ss["reporte_df"].head(25).style.format(formatos), hide_index=True, **ancho(st.dataframe))
         elif meta.get("muestra_texto"):
             md(titulo_seccion("Texto extraído del PDF", "Útil para revisar el formato si no se reconoce la tabla."))
             st.code(meta["muestra_texto"], language=None)
@@ -2331,7 +2896,7 @@ def panel_sincronizacion():
     ss = st.session_state
     with tarjeta("sync"):
         md(titulo_seccion("📥 Reporte de ventas", "Sube el PDF del período: la app detecta si es quincena o mes y calcula la planilla de una sola vez."))
-        c1, c2 = st.columns([3, 1])
+        c1, c2 = columnas([3, 1], "center")
         with c1:
             archivo_subido = st.file_uploader("Reporte de ventas (PDF)", type=["pdf"], key=f"pdf_uploader_{ss['uploader_nonce']}", label_visibility="collapsed")
         with c2:
@@ -2354,15 +2919,13 @@ def panel_sincronizacion():
             pi = ss.get("periodo_info")
             q = ss["quincenas_multiplicador"]
             if pi:
-                p1, p2 = st.columns([3, 1])
+                p1, p2 = columnas([3, 1], "center")
                 with p1:
                     md(f"<div class='periodo'><div class='periodo-ico'>📅</div><div><div class='periodo-t'>{html.escape(pi['etiqueta'])}</div>"
                        f"<div class='periodo-s'>Del {pi['inicio']} al {pi['fin']} · {pi['dias']} días · detectado en el {html.escape(pi['fuente'])}</div></div>"
                        f"<div class='periodo-q'><b>{q:g}</b><span>{'quincena' if q == 1 else 'quincenas'} a pagar</span></div></div>")
                 with p2:
-                    espacio(8)
-                    if "map_quincenas" not in ss:
-                        ss["map_quincenas"] = ss.get("quincenas_manual") or AUTO
+                    sembrar("map_quincenas", ss.get("quincenas_manual") or AUTO)
                     st.selectbox("¿Ajustar quincenas?", [AUTO, 1.0, 2.0, 3.0, 4.0], key="map_quincenas", on_change=cambiar_quincenas,
                                  format_func=lambda v: f"Automático ({pi['quincenas']})" if v == AUTO else f"{v:g} quincena(s)")
             chips = ""
@@ -2379,104 +2942,35 @@ def panel_sincronizacion():
     espacio(6)
 
 
+def filas_historial(datos_emp):
+    ss = st.session_state
+    pi = ss.get("periodo_info") or {}
+    guardado = ahora_sv().strftime("%Y-%m-%d %H:%M")
+    return [{"Guardado": guardado, "Periodo": ss["periodo_texto"], "Desde": pi.get("inicio", ""), "Hasta": pi.get("fin", ""),
+             "Quincenas": ss["quincenas_multiplicador"], "Colaborador": d["Colaborador"], "Forma_Pago": d["Modalidad"],
+             "Servicios": d["Servicios"], "Ventas": round(d["Ventas PDF"], 2), "Sueldo_Neto": round(d["Base Neta"], 2),
+             "Comision": round(d["Com Neta"], 2), "Bonos": round(d["Bonos"], 2), "Descuentos": round(d["Desc"], 2),
+             "Renta": round(d["Renta"], 2), "Total": round(d["Total"], 2)} for d in datos_emp]
+
+
 # =====================================================================
 # 17. PÁGINAS
 # =====================================================================
 ss = st.session_state
 pagina = ss["pagina"]
 
-if pagina == "Dashboard":
-    if aj("mostrar_hero"):
-        hero_dashboard()
-    else:
-        encabezado_pagina("📊", "Panel general", "Ingresos, planilla y rentabilidad del período.")
-    panel_sincronizacion()
-
-    if ss["total_ingresos_pdf"] > 0:
-        filas = calcular_planilla()
-        costo_planilla = sum(f["Total"] for f in filas)
-        ingresos = float(ss["total_ingresos_pdf"])
-        utilidad = ingresos - costo_planilla
-        margen = (utilidad / ingresos * 100.0) if ingresos else 0.0
-        rep_df = ss.get("reporte_df")
-        n_serv = int(len(rep_df)) if rep_df is not None else 0
-        ticket = ingresos / n_serv if n_serv else 0.0
-        extras_total = sum(ss["extras_por_marca"].values())
-        renta_total = sum(f["Renta"] for f in filas)
-        comisiones_total = sum(f["Com Neta"] for f in filas)
-
-        fila_kpis([
-            kpi_html("💰", "Ingresos brutos", usd(ingresos), f"{n_serv} servicios · ticket promedio {usd(ticket)}", "indigo"),
-            kpi_html("👥", "Planilla a pagar", usd(costo_planilla), f"{(costo_planilla / ingresos * 100 if ingresos else 0):.1f}% de los ingresos", "sky"),
-            kpi_html("🏦", "Utilidad estimada", usd(utilidad), "Ingresos − planilla", "green" if utilidad >= 0 else "red", "pos" if utilidad >= 0 else "neg"),
-            kpi_html("📈", "Margen neto", f"{margen:,.1f}%", "Sobre ingresos brutos", "violet", "pos" if margen >= 0 else "neg"),
-        ])
-        espacio(12)
-        fila_kpis([
-            kpi_html("✨", "Extras generados", usd(extras_total), f"Excedente sobre {usd(umbral_extra())} por servicio", "amber"),
-            kpi_html("💼", "Comisiones netas", usd(comisiones_total), "A pagar a colaboradores", "indigo"),
-            kpi_html("🏛️", "Renta retenida", usd(renta_total), f"{aj('renta_pct'):g}% sobre sueldos brutos", "sky"),
-            kpi_html("🗓️", "Quincenas", f"{ss['quincenas_multiplicador']:g}", html.escape(ss["periodo_texto"]), "violet"),
-        ])
-        espacio(14)
-
-        if ss["ingresos_por_marca"]:
-            g1, g2 = st.columns([1, 1.35])
-            with g1:
-                with tarjeta("donut"):
-                    md(titulo_seccion("Ingresos por marca", "Según la columna e-comer del reporte"))
-                    st.plotly_chart(grafico_donut_marcas(ss["ingresos_por_marca"]), config=PLOTLY_CONFIG, **ancho(st.plotly_chart))
-            with g2:
-                with tarjeta("barras"):
-                    md(titulo_seccion("Ingresos vs. extras por marca", f"Extra = excedente sobre {usd(umbral_extra())} por servicio"))
-                    st.plotly_chart(grafico_barras_marcas(ss["ingresos_por_marca"], ss["extras_por_marca"]), config=PLOTLY_CONFIG, **ancho(st.plotly_chart))
-
-        ventas_colab = {emp: ss.get(f"serv_tot_{emp}", 0.0) for emp in ss["empleados"].keys()}
-        hay_servicios = rep_df is not None and (rep_df["Servicio"].str.strip() != "").any()
-        h1, h2 = st.columns(2) if hay_servicios else (st.container(), None)
-        if any(v > 0 for v in ventas_colab.values()):
-            with h1:
-                with tarjeta("colaboradores"):
-                    md(titulo_seccion("Ventas por colaborador", "Servicios facturados en el período"))
-                    st.plotly_chart(grafico_colaboradores(ventas_colab), config=PLOTLY_CONFIG, **ancho(st.plotly_chart))
-        if hay_servicios and h2 is not None:
-            with h2:
-                with tarjeta("top_servicios"):
-                    md(titulo_seccion("Servicios más rentables", "Top 8 por ingresos"))
-                    st.plotly_chart(grafico_top_servicios(rep_df), config=PLOTLY_CONFIG, **ancho(st.plotly_chart))
-
-        if rep_df is not None and rep_df["Fecha"].notna().any() and rep_df["Fecha"].nunique() >= 2:
-            with tarjeta("tendencia"):
-                md(titulo_seccion("Tendencia de ingresos diarios", "Suma de servicios por día"))
-                st.plotly_chart(grafico_tendencia(rep_df), config=PLOTLY_CONFIG, **ancho(st.plotly_chart))
-
-        with tarjeta("resumen_colab"):
-            md(titulo_seccion("Resumen ejecutivo por colaborador", "Ventas, comisión y total a pagar del período"))
-            df_res = pd.DataFrame([{"Colaborador": f["Colaborador"], "Modalidad": f["Modalidad"], "Servicios": f["Servicios"], "Ventas": f["Ventas PDF"],
-                                    "Comisión neta": f["Com Neta"], "Total a pagar": f["Total"]} for f in filas]).sort_values("Ventas", ascending=False)
-            st.dataframe(df_res.style.format({"Ventas": "${:,.2f}", "Comisión neta": "${:,.2f}", "Total a pagar": "${:,.2f}"}), hide_index=True, **ancho(st.dataframe))
-    else:
-        estado_vacio(IMG_REPORTE, "Tu tablero está listo para el primer reporte", "Sube el PDF de ventas en el panel de arriba y la app calculará todo de una sola vez.",
-                     ["Exporta el reporte de ventas del período en PDF.", "Arrástralo al panel «Reporte de ventas».", "Revisa la planilla: la app detecta si es quincena o mes."])
-
-elif pagina == "Planillas":
-    encabezado_pagina("💼", "Planillas", f"Sube el reporte de ventas y la planilla del período se calcula sola: sueldos, extras sobre {usd(umbral_extra())}, comisiones y renta.")
+if pagina == "Planillas":
+    encabezado_pagina("💼", "Planillas", f"Sube el reporte de ventas y la planilla del período se calcula sola: sueldos, extras sobre {usd(umbral_extra())}, porcentajes y renta.")
     panel_sincronizacion()
 
     contenedor_pago = st.container()
 
     espacio(4)
-    md(titulo_seccion("✏️ Ajustes y detalle por colaborador", "Agrega bonos o descuentos, corrige un monto o revisa cada servicio del PDF. El total se actualiza al instante."))
+    md(titulo_seccion("✏️ Ajustes y detalle por colaborador", "Cambia la forma de pago o el porcentaje, agrega bonos o descuentos y revisa cada servicio del PDF."))
     datos_emp = []
     for emp, info in ss["empleados"].items():
         mod = info.get("mod", MOD_FIJO)
-        if "Estándar" in mod:
-            etiqueta_mod = f"Estándar · extras sobre {usd(umbral_extra())}"
-        elif "Porcentaje" in mod:
-            etiqueta_mod = f"Porcentaje · {float(info.get('porc', 0) or 0):g}% de ventas"
-        else:
-            etiqueta_mod = "Salario fijo"
-        with st.expander(f"👤 {emp}  ·  {info.get('rol', '')}  ·  {etiqueta_mod}"):
+        with st.expander(f"👤 {emp}  ·  {forma_pago_texto(info)}"):
             r = ss.get("resumen_pdf", {}).get(emp)
             if r:
                 chips = chip(f"🧾 {r['Servicios']} servicios", "indigo") + chip(f"💰 Ventas {usd(r['Ventas'])}", "green")
@@ -2486,17 +2980,35 @@ elif pagina == "Planillas":
             else:
                 chips = chip("Sin datos del reporte de ventas")
             if "Porcentaje" in mod:
-                chips = chip("🪙 Sin sueldo base · gana solo su %", "violet") + chips
+                chips = chip(f"📈 Gana el {float(info.get('porc', 0) or 0):g}% de lo que vende", "violet") + chips
             else:
                 chips = chip(f"🪙 Sueldo neto {usd(sueldo_neto_de(info))} por quincena", "violet") + chips
             md(f"<div class='chips'>{chips}</div>")
 
+            # --- Forma de pago (cambio rápido; se guarda en el personal) ---
+            k_mod, k_porc = f"fp_mod_{emp}", f"fp_porc_{emp}"
+            sembrar(k_mod, mod if mod in MODALIDADES else MOD_FIJO)
+            f1, f2, f3 = columnas([1.5, 1, 1], "bottom")
+            f1.selectbox("Forma de pago", MODALIDADES, key=k_mod, format_func=lambda m: MOD_ETIQUETAS.get(m, m))
+            mod_sel = ss[k_mod]
+            usa_porc = mod_sel == MOD_PORCENTAJE or (mod_sel == MOD_FIJO and info.get("rol") == "Operativo")
+            porc_actual = float(info.get("porc", 0) or 0)
+            if usa_porc:
+                sembrar(k_porc, porc_actual if porc_actual > 0 else (20.0 if mod_sel == MOD_PORCENTAJE else 0.0))
+                f2.number_input("% de comisión" if mod_sel == MOD_PORCENTAJE else "Comisión adicional (%)", min_value=0.0, max_value=100.0,
+                                step=1.0, format="%.0f", key=k_porc)
+            hay_cambio = mod_sel != mod or (usa_porc and abs(float(ss.get(k_porc, porc_actual) or 0) - porc_actual) > 1e-9)
+            f3.button("Aplicar cambio", key=f"fp_btn_{emp}", on_click=aplicar_forma_pago, args=(emp,),
+                      type="primary" if hay_cambio else "secondary", disabled=not hay_cambio, **ancho(st.button))
+            st.caption(MOD_AYUDA.get(mod_sel, ""))
+
+            # --- Montos del período ---
             c1, c2, c3 = st.columns([1.2, 1, 1])
             with c1:
                 campo_persistente(st.number_input, "Sueldo neto del período ($)", f"base_net_{emp}", f"ui_b_net_{emp}", conv=float, step=0.01, format="%.2f",
                                   help="Sueldo neto quincenal (Configuración) × quincenas del período. La app calcula el bruto y la renta.")
                 campo_persistente(st.number_input, "Comisiones ($)", f"com_{emp}", f"ui_c_{emp}", conv=float, step=0.01, format="%.2f",
-                                  help="Estándar: (precio − extra mínimo) menos la pauta, por cada servicio. Porcentaje: ventas × %.")
+                                  help="Sueldo + extras: (precio − precio mínimo) menos la pauta, por servicio. Porcentaje: ventas × %.")
             with c2:
                 campo_persistente(st.number_input, "Bonos ($)", f"hex_{emp}", f"ui_h_{emp}", conv=float, step=0.01, format="%.2f")
                 campo_persistente(st.number_input, "Descuentos ($)", f"desc_{emp}", f"ui_d_{emp}", conv=float, step=0.01, format="%.2f")
@@ -2537,7 +3049,10 @@ elif pagina == "Planillas":
                 kpi_html("💼", "Comisiones netas", usd(sum(d["Com Neta"] for d in datos_emp)), f"Pauta retenida {usd(sum(d['Ret Pub'] for d in datos_emp))}", "green"),
                 kpi_html("🏛️", f"Renta ({aj('renta_pct'):g}%)", usd(sum(d["Renta"] for d in datos_emp)), "Retenida sobre los sueldos brutos", "amber"),
             ])
-            espacio(14)
+            if ss.get("pdf_ok"):
+                espacio(4)
+                render_cuadre()
+            espacio(10)
             md(titulo_seccion("💵 Pago por colaborador", "Lo que debes pagarle a cada persona en este período, con el detalle del cálculo."))
             for i in range(0, len(datos_emp), 3):
                 cols = st.columns(3)
@@ -2545,28 +3060,40 @@ elif pagina == "Planillas":
                     md(tarjeta_pago_html(f, ss["empleados"][f["Colaborador"]]), col)
 
             with tarjeta("tabla_planilla"):
-                md(titulo_seccion("📊 Planilla consolidada", "Incluye la fila de TOTAL general. Puedes descargarla en Excel o PDF."))
+                md(titulo_seccion("📊 Planilla consolidada", "Con fila de TOTAL. Descárgala o guárdala en el historial de Google Sheets como respaldo."))
                 df_pl = pd.DataFrame(datos_emp)
                 vista = df_pl[["Colaborador", "Modalidad", "Servicios", "Ventas PDF", "Base Bruta", "Renta", "Base Neta", "Extra", "Ret Pub", "Com Neta", "Bonos", "Desc", "Total"]].rename(columns={
-                    "Ventas PDF": "Ventas", "Base Bruta": "Sueldo bruto", "Base Neta": "Sueldo neto", "Extra": "Extra bruto",
+                    "Modalidad": "Forma de pago", "Ventas PDF": "Ventas", "Base Bruta": "Sueldo bruto", "Base Neta": "Sueldo neto", "Extra": "Extra bruto",
                     "Ret Pub": "Pauta", "Com Neta": "Comisión neta", "Desc": "Descuentos", "Total": "Total a pagar"})
-                cols_num = [c for c in vista.columns if c not in ("Colaborador", "Modalidad", "Servicios")]
+                cols_num = [c for c in vista.columns if c not in ("Colaborador", "Forma de pago", "Servicios")]
                 totales = {c: float(vista[c].sum()) for c in cols_num}
-                totales.update({"Colaborador": "TOTAL", "Modalidad": "", "Servicios": int(vista["Servicios"].sum())})
+                totales.update({"Colaborador": "TOTAL", "Forma de pago": "", "Servicios": int(vista["Servicios"].sum())})
                 vista = pd.concat([vista, pd.DataFrame([totales])], ignore_index=True)
+                estilo_total = f"font-weight:700;background-color:{tema()['p50']};color:{tema()['p600']}"
 
                 def _resaltar_total(fila_tabla):
-                    estilo = "font-weight:700;background-color:#EEF2FF;color:#1E1B4B" if fila_tabla["Colaborador"] == "TOTAL" else ""
-                    return [estilo] * len(fila_tabla)
+                    return [estilo_total if fila_tabla["Colaborador"] == "TOTAL" else ""] * len(fila_tabla)
 
                 st.dataframe(vista.style.format("${:,.2f}", subset=cols_num).apply(_resaltar_total, axis=1), hide_index=True, **ancho(st.dataframe))
-                d1, d2, _ = st.columns([1, 1, 2])
+                d1, d2, d3 = st.columns(3)
                 with d1:
                     csv = df_pl.drop(columns=["Email", "DUI", "Cuenta"]).to_csv(index=False).encode("utf-8-sig")
                     st.download_button("⬇️ Excel / CSV", data=csv, file_name=f"Planilla_{ahora_sv().strftime('%Y-%m-%d')}.csv", mime="text/csv", **ancho(st.download_button))
                 with d2:
                     st.download_button("⬇️ Planilla en PDF", data=generar_planilla_pdf(datos_emp, ss["periodo_texto"]),
                                        file_name=f"Planilla_{ahora_sv().strftime('%Y-%m-%d')}.pdf", mime="application/pdf", **ancho(st.download_button))
+                with d3:
+                    guardar_hist = st.button("☁️ Guardar en historial", type="primary", disabled=not ss.get("pdf_ok"), **ancho(st.button),
+                                             help="Guarda el resultado de esta planilla en la hoja «Historial_Planillas». Si el período ya existía, se reemplaza.")
+                if guardar_hist:
+                    filas_h = filas_historial(datos_emp)
+                    ss["historial_local"][ss["periodo_texto"]] = filas_h
+                    ss.pop("hist_cache", None)
+                    if guardar_historial_planilla(filas_h, ss["periodo_texto"]):
+                        registrar_auditoria("Planilla guardada en historial", ss["periodo_texto"])
+                        st.toast("Planilla guardada en el historial de Google Sheets.", icon="☁️")
+                    else:
+                        st.error("No se pudo guardar en Google Sheets (quedó guardada solo en esta sesión). Revisa la conexión en Configuración → Respaldo y conexión.")
 
         espacio(10)
         c_ind, c_mas = st.columns([1.25, 1])
@@ -2634,6 +3161,195 @@ elif pagina == "Planillas":
                     if errores:
                         st.error("No se pudieron enviar algunos recibos:\n\n" + "\n".join(f"- {e}" for e in errores))
 
+elif pagina == "Ecommerce":
+    encabezado_pagina("🏪", "E-commerce", "Lo que generó cada e-commerce en el período: ventas, servicios, formas de pago, profesionales y clientes, verificado contra el PDF.")
+    rep = ss.get("reporte_df")
+    if rep is None or rep.empty:
+        estado_vacio(img_reporte(), "Sube un reporte para ver los e-commerce", "El reporte se carga desde Planillas o desde el Panel general.",
+                     ["Ve a Planillas y sube el PDF de ventas.", "Vuelve aquí para ver cada e-commerce por separado.", "Revisa la verificación contra el PDF."])
+    else:
+        marcas = marcas_ordenadas(dict.fromkeys(rep["Marca"].tolist()))
+        total = float(rep["Precio"].sum())
+        md("<div class='chips'>" + chip(f"📅 {html.escape(ss['periodo_texto'])}", "indigo") + chip(f"🧾 {len(rep)} servicios · {usd(total)}", "green") + "</div>")
+        for i in range(0, len(marcas), 4):
+            cols = st.columns(4)
+            for col, marca in zip(cols, marcas[i:i + 4]):
+                sub = rep[rep["Marca"] == marca]
+                ventas = float(sub["Precio"].sum())
+                pct = ventas / total * 100 if total else 0.0
+                color = COLORES_MARCA.get(marca, "#64748B")
+                ticket = ventas / len(sub) if len(sub) else 0.0
+                md(f"<div class='marca' style='--c:{color}'><div class='marca-top'><div class='marca-nom'><i></i>{html.escape(marca)}</div>"
+                   f"<span class='marca-pct'>{pct:.1f}%</span></div><div class='marca-val'>{usd(ventas)}</div>"
+                   f"<div class='marca-sub'>{len(sub)} servicios · ticket promedio {usd(ticket)}</div>"
+                   f"<div class='marca-bar'><span style='width:{pct:.1f}%'></span></div></div>", col)
+
+        with tarjeta("cuadre_ecom"):
+            md(titulo_seccion("🔎 Verificación contra el PDF", "Compara lo que suma la app con los totales que imprime el reporte (general, por e-commerce y por profesional)."))
+            render_cuadre(expandido=True)
+
+        g1, g2 = st.columns([1, 1.25])
+        with g1:
+            with tarjeta("ecom_donut"):
+                md(titulo_seccion("Participación en ventas", "Peso de cada e-commerce en el total"))
+                st.plotly_chart(grafico_donut_marcas({m: float(rep[rep["Marca"] == m]["Precio"].sum()) for m in marcas}), config=PLOTLY_CONFIG, key="ch_ecom_donut", **ancho(st.plotly_chart))
+        with g2:
+            with tarjeta("ecom_pagos"):
+                if ss.get("pagos_ok"):
+                    md(titulo_seccion("Formas de pago por e-commerce", "Efectivo, transferencia y POS (tarjeta)"))
+                    st.plotly_chart(grafico_pagos_marcas(rep, marcas), config=PLOTLY_CONFIG, key="ch_ecom_pagos", **ancho(st.plotly_chart))
+                else:
+                    md(titulo_seccion("Formas de pago por e-commerce", "Este reporte no trae columnas de efectivo y transferencia."))
+
+        if rep["Fecha"].notna().any() and rep["Fecha"].nunique() >= 2:
+            with tarjeta("ecom_tendencia"):
+                md(titulo_seccion("Ventas diarias por e-commerce", "Pasa el cursor (o toca) un día para comparar"))
+                st.plotly_chart(grafico_tendencia_marcas(rep, marcas), config=PLOTLY_CONFIG, key="ch_ecom_tend", **ancho(st.plotly_chart))
+
+        with tarjeta("ecom_matriz"):
+            md(titulo_seccion("👥 ¿Quién generó qué en cada e-commerce?", "Ventas o cantidad de servicios de cada profesional del PDF, por e-commerce."))
+            modo_matriz = st.radio("Ver", ["Ventas", "Servicios"], horizontal=True, key="matriz_modo", label_visibility="collapsed")
+            base = rep.assign(Profesional=rep["Profesional"].map(nombre_bonito))
+            if modo_matriz == "Ventas":
+                matriz = base.pivot_table(index="Profesional", columns="Marca", values="Precio", aggfunc="sum", fill_value=0.0)
+            else:
+                matriz = base.pivot_table(index="Profesional", columns="Marca", values="Precio", aggfunc="count", fill_value=0)
+            matriz = matriz[[m for m in marcas if m in matriz.columns]]
+            matriz["Total"] = matriz.sum(axis=1)
+            matriz = matriz.sort_values("Total", ascending=False)
+            matriz.loc["TOTAL"] = matriz.sum()
+            if modo_matriz == "Ventas":
+                st.dataframe(matriz.style.format("${:,.2f}"), **ancho(st.dataframe))
+            else:
+                st.dataframe(matriz.astype(int), **ancho(st.dataframe))
+
+        md(titulo_seccion("🏪 Detalle por e-commerce", "Elige un e-commerce para ver sus servicios, profesionales, clientes y formas de pago."))
+        pestanas = st.tabs(marcas)
+        for pestana, marca in zip(pestanas, marcas):
+            with pestana:
+                sub = rep[rep["Marca"] == marca]
+                ventas = float(sub["Precio"].sum())
+                clientes = sub["Cliente"].map(_clave_nombre)
+                clientes = clientes[clientes != ""]
+                recurrentes = int((clientes.value_counts() > 1).sum())
+                fila_kpis([
+                    kpi_html("💰", "Ventas", usd(ventas), f"{(ventas / total * 100 if total else 0):.1f}% del total", "indigo"),
+                    kpi_html("🧾", "Servicios", str(len(sub)), f"Ticket promedio {usd(ventas / len(sub) if len(sub) else 0)}", "sky"),
+                    kpi_html("🙋", "Clientes únicos", str(int(clientes.nunique())), f"{recurrentes} volvieron más de una vez", "green"),
+                    kpi_html("✨", "Extras generados", usd(float(sub["Extra"].sum())), f"Excedente sobre {usd(umbral_extra())}", "amber"),
+                ])
+                if ss.get("pagos_ok"):
+                    md("<div class='chips'>" + chip(f"💵 Efectivo {usd(sub['Efectivo'].sum())}") + chip(f"🏦 Transferencia {usd(sub['Transferencia'].sum())}")
+                       + chip(f"💳 POS {usd(sub['POS'].sum())}") + "</div>")
+                espacio(6)
+                t1, t2 = st.columns([1.15, 1])
+                with t1:
+                    with tarjeta(f"ecom_top_{_clave_nombre(marca).lower()}"):
+                        md(titulo_seccion("Servicios más vendidos", "Top 8 por ingresos"))
+                        if (sub["Servicio"].str.strip() != "").any():
+                            st.plotly_chart(grafico_top_servicios(sub, COLORES_MARCA.get(marca)), config=PLOTLY_CONFIG, key=f"ch_top_{_clave_nombre(marca)}", **ancho(st.plotly_chart))
+                with t2:
+                    with tarjeta(f"ecom_prof_{_clave_nombre(marca).lower()}"):
+                        md(titulo_seccion("Profesionales", "Quién atendió en este e-commerce"))
+                        profs = (sub.assign(Profesional=sub["Profesional"].map(nombre_bonito))
+                                 .groupby("Profesional").agg(Servicios=("Precio", "size"), Ventas=("Precio", "sum")).sort_values("Ventas", ascending=False).reset_index())
+                        profs["Ticket"] = profs["Ventas"] / profs["Servicios"]
+                        st.dataframe(profs.style.format({"Ventas": "${:,.2f}", "Ticket": "${:,.2f}"}), hide_index=True, **ancho(st.dataframe))
+                with st.expander(f"📋 Todos los servicios de {marca} ({len(sub)})"):
+                    detalle = sub.assign(Fecha=sub["Fecha"].dt.strftime("%d/%m/%Y").fillna("—"), Profesional=sub["Profesional"].map(nombre_bonito))
+                    columnas_det = [c for c in ("Fecha", "Cliente", "Servicio", "Profesional", "Precio", "Efectivo", "Transferencia", "POS") if c in detalle.columns]
+                    detalle = detalle[columnas_det]
+                    formatos = {c: "${:,.2f}" for c in ("Precio", "Efectivo", "Transferencia", "POS") if c in detalle.columns}
+                    st.dataframe(detalle.style.format(formatos), hide_index=True, **ancho(st.dataframe))
+                    st.download_button(f"⬇️ Descargar servicios de {marca} (CSV)", data=detalle.to_csv(index=False).encode("utf-8-sig"),
+                                       file_name=f"Servicios_{nombre_archivo('', marca).strip('_').replace('.pdf', '')}.csv", mime="text/csv",
+                                       key=f"dl_ecom_{_clave_nombre(marca)}")
+
+elif pagina == "Dashboard":
+    if aj("mostrar_hero"):
+        hero_dashboard()
+    else:
+        encabezado_pagina("📊", "Panel general", "Ingresos, planilla y rentabilidad del período.")
+    panel_sincronizacion()
+
+    if ss["total_ingresos_pdf"] > 0:
+        filas = calcular_planilla()
+        costo_planilla = sum(f["Total"] for f in filas)
+        ingresos = float(ss["total_ingresos_pdf"])
+        utilidad = ingresos - costo_planilla
+        margen = (utilidad / ingresos * 100.0) if ingresos else 0.0
+        rep_df = ss.get("reporte_df")
+        n_serv = int(len(rep_df)) if rep_df is not None else 0
+        ticket = ingresos / n_serv if n_serv else 0.0
+        extras_total = sum(ss["extras_por_marca"].values())
+        renta_total = sum(f["Renta"] for f in filas)
+        comisiones_total = sum(f["Com Neta"] for f in filas)
+
+        fila_kpis([
+            kpi_html("💰", "Ingresos brutos", usd(ingresos), f"{n_serv} servicios · ticket promedio {usd(ticket)}", "indigo"),
+            kpi_html("👥", "Planilla a pagar", usd(costo_planilla), f"{(costo_planilla / ingresos * 100 if ingresos else 0):.1f}% de los ingresos", "sky"),
+            kpi_html("🏦", "Utilidad estimada", usd(utilidad), "Ingresos − planilla", "green" if utilidad >= 0 else "red", "pos" if utilidad >= 0 else "neg"),
+            kpi_html("📈", "Margen neto", f"{margen:,.1f}%", "Sobre ingresos brutos", "violet", "pos" if margen >= 0 else "neg"),
+        ])
+        espacio(12)
+        if ss.get("pagos_ok") and rep_df is not None:
+            fila_kpis([
+                kpi_html("💵", "Efectivo", usd(rep_df["Efectivo"].sum()), f"{(rep_df['Efectivo'].sum() / ingresos * 100 if ingresos else 0):.1f}% de las ventas", "green"),
+                kpi_html("🏦", "Transferencias", usd(rep_df["Transferencia"].sum()), f"{(rep_df['Transferencia'].sum() / ingresos * 100 if ingresos else 0):.1f}% de las ventas", "violet"),
+                kpi_html("💳", "POS (tarjeta)", usd(rep_df["POS"].sum()), f"{(rep_df['POS'].sum() / ingresos * 100 if ingresos else 0):.1f}% de las ventas", "red"),
+                kpi_html("✨", "Extras generados", usd(extras_total), f"Excedente sobre {usd(umbral_extra())} por servicio", "amber"),
+            ])
+        else:
+            fila_kpis([
+                kpi_html("✨", "Extras generados", usd(extras_total), f"Excedente sobre {usd(umbral_extra())} por servicio", "amber"),
+                kpi_html("💼", "Comisiones netas", usd(comisiones_total), "A pagar a colaboradores", "indigo"),
+                kpi_html("🏛️", "Renta retenida", usd(renta_total), f"{aj('renta_pct'):g}% sobre sueldos brutos", "sky"),
+                kpi_html("🗓️", "Quincenas", f"{ss['quincenas_multiplicador']:g}", html.escape(ss["periodo_texto"]), "violet"),
+            ])
+        espacio(6)
+        render_cuadre()
+        espacio(8)
+
+        if ss["ingresos_por_marca"]:
+            g1, g2 = st.columns([1, 1.35])
+            with g1:
+                with tarjeta("donut"):
+                    md(titulo_seccion("Ingresos por e-commerce", "Según la columna e-comer del reporte"))
+                    st.plotly_chart(grafico_donut_marcas(ss["ingresos_por_marca"]), config=PLOTLY_CONFIG, key="ch_dash_donut", **ancho(st.plotly_chart))
+            with g2:
+                with tarjeta("barras"):
+                    md(titulo_seccion("Ingresos vs. extras por e-commerce", f"Extra = excedente sobre {usd(umbral_extra())} por servicio"))
+                    st.plotly_chart(grafico_barras_marcas(ss["ingresos_por_marca"], ss["extras_por_marca"]), config=PLOTLY_CONFIG, key="ch_dash_barras", **ancho(st.plotly_chart))
+
+        ventas_colab = {emp: ss.get(f"serv_tot_{emp}", 0.0) for emp in ss["empleados"].keys()}
+        hay_servicios = rep_df is not None and (rep_df["Servicio"].str.strip() != "").any()
+        h1, h2 = st.columns(2) if hay_servicios else (st.container(), None)
+        if any(v > 0 for v in ventas_colab.values()):
+            with h1:
+                with tarjeta("colaboradores"):
+                    md(titulo_seccion("Ventas por colaborador", "Servicios facturados en el período"))
+                    st.plotly_chart(grafico_colaboradores(ventas_colab), config=PLOTLY_CONFIG, key="ch_dash_colab", **ancho(st.plotly_chart))
+        if hay_servicios and h2 is not None:
+            with h2:
+                with tarjeta("top_servicios"):
+                    md(titulo_seccion("Servicios más rentables", "Top 8 por ingresos"))
+                    st.plotly_chart(grafico_top_servicios(rep_df), config=PLOTLY_CONFIG, key="ch_dash_top", **ancho(st.plotly_chart))
+
+        if rep_df is not None and rep_df["Fecha"].notna().any() and rep_df["Fecha"].nunique() >= 2:
+            with tarjeta("tendencia"):
+                md(titulo_seccion("Tendencia de ingresos diarios", "Suma de servicios por día"))
+                st.plotly_chart(grafico_tendencia(rep_df), config=PLOTLY_CONFIG, key="ch_dash_tend", **ancho(st.plotly_chart))
+
+        with tarjeta("resumen_colab"):
+            md(titulo_seccion("Resumen ejecutivo por colaborador", "Ventas, comisión y total a pagar del período"))
+            df_res = pd.DataFrame([{"Colaborador": f["Colaborador"], "Forma de pago": f["Modalidad"], "Servicios": f["Servicios"], "Ventas": f["Ventas PDF"],
+                                    "Comisión neta": f["Com Neta"], "Total a pagar": f["Total"]} for f in filas]).sort_values("Ventas", ascending=False)
+            st.dataframe(df_res.style.format({"Ventas": "${:,.2f}", "Comisión neta": "${:,.2f}", "Total a pagar": "${:,.2f}"}), hide_index=True, **ancho(st.dataframe))
+    else:
+        estado_vacio(img_reporte(), "Tu tablero está listo para el primer reporte", "Sube el PDF de ventas en el panel de arriba y la app calculará todo de una sola vez.",
+                     ["Exporta el reporte de ventas del período en PDF.", "Arrástralo al panel «Reporte de ventas».", "Revisa la planilla: la app detecta si es quincena o mes."])
+
+
 elif pagina == "Proveedores":
     encabezado_pagina("📇", "Directorio de Proveedores", "Perfil 360° de cada proveedor: contacto, datos financieros y control de contratos y auditoría.")
     proveedores = ss["proveedores"]
@@ -2677,7 +3393,7 @@ elif pagina == "Proveedores":
                 ss["prov_seleccionado"] = nombre_nuevo
                 st.rerun()
     else:
-        col_sel, col_info, col_btn = st.columns([2.2, 1.2, 1])
+        col_sel, col_info, col_btn = columnas([2.2, 1.3, 1], "bottom")
         with col_sel:
             prov_seleccionado = st.selectbox("🔎 Buscar proveedor", nombres_provs, key="prov_seleccionado", placeholder="Escribe para buscar...")
         with col_info:
@@ -2685,23 +3401,20 @@ elif pagina == "Proveedores":
             chips = chip(f"📇 {len(proveedores)} proveedores", "indigo")
             if alertas:
                 chips += chip(f"⚠️ {alertas} contrato(s) por atender", "amber")
-            espacio(28)
             md(f"<div class='chips'>{chips}</div>")
         with col_btn:
-            espacio(28)
             st.button("➕ Nuevo proveedor", type="primary", on_click=abrir_nuevo_proveedor, **ancho(st.button))
 
         if prov_seleccionado:
             idx = nombres_provs.index(prov_seleccionado)
             render_perfil_proveedor(proveedores[idx], idx)
-            if proveedores:
-                with st.expander("📋 Ver todos los proveedores en lista"):
-                    lista = pd.DataFrame([{"Proveedor": nombre_proveedor(p), "Contacto": _texto(p.get("Nombre_Contacto")), "Teléfono": _texto(p.get("Telefono_1")),
-                                           "Correo": _texto(p.get("Correo")), "Banco": _texto(p.get("Banco")), "Vencimiento": _texto(p.get("Fecha_Vencimiento")),
-                                           "Estado": estado_contrato(p)[0]} for p in proveedores])
-                    st.dataframe(lista, hide_index=True, **ancho(st.dataframe))
+            with st.expander("📋 Ver todos los proveedores en lista"):
+                lista = pd.DataFrame([{"Proveedor": nombre_proveedor(p), "Contacto": _texto(p.get("Nombre_Contacto")), "Teléfono": _texto(p.get("Telefono_1")),
+                                       "Correo": _texto(p.get("Correo")), "Banco": _texto(p.get("Banco")), "Vencimiento": _texto(p.get("Fecha_Vencimiento")),
+                                       "Estado": estado_contrato(p)[0]} for p in proveedores])
+                st.dataframe(lista, hide_index=True, **ancho(st.dataframe))
         else:
-            estado_vacio(IMG_DIRECTORIO, "Aún no hay proveedores", "Agrega el primero con el botón «Nuevo proveedor».")
+            estado_vacio(img_directorio(), "Aún no hay proveedores", "Agrega el primero con el botón «Nuevo proveedor».")
 
 elif pagina == "Memorándums":
     encabezado_pagina("📝", "Memorándums internos", "Genera comunicaciones oficiales en PDF, descárgalas o envíalas al correo del colaborador.")
@@ -2731,8 +3444,8 @@ elif pagina == "Memorándums":
         with tarjeta("memo_tips"):
             md(titulo_seccion("Buenas prácticas") + "<div class='tips'><div class='tip'><span>🎯</span>Un solo tema por memorándum; el asunto debe resumirlo.</div>"
                "<div class='tip'><span>📅</span>Indica fechas y plazos concretos cuando haya una instrucción.</div>"
-               "<div class='tip'><span>📨</span>Envíalo por correo y guarda la constancia en Auditoría.</div>"
-               "<div class='tip'><span>✍️</span>Para expedientes, imprime y pide la firma de recibido.</div></div>")
+               "<div class='tip'><span>📨</span>Envíalo por correo: la constancia queda en el Historial.</div>"
+               "<div class='tip'><span>✍️</span>Para el expediente, imprímelo y pide la firma de recibido.</div></div>")
 
 elif pagina == "Amonestaciones":
     encabezado_pagina("⚠️", "Faltas y amonestaciones", "Documenta incidentes, genera actas formales con firmas y envíalas por correo.")
@@ -2769,29 +3482,74 @@ elif pagina == "Amonestaciones":
                 md("<div class='tips'><div class='tip'><span>✅</span>Sin actas registradas.</div></div>")
 
 elif pagina == "Auditoría":
-    encabezado_pagina("🗂️", "Registro de auditoría", "Trazabilidad de recibos, memorándums y actas generados o enviados.")
-    historial = ss["historial_auditoria"]
-    if historial:
-        df_aud = pd.DataFrame(historial)
-        recibos = int(df_aud["Tipo Documento"].str.startswith("Recibo").sum())
-        enviados_correo = int(df_aud["Tipo Documento"].str.contains("enviado|Recibo", case=False, regex=True).sum())
-        fila_kpis([
-            kpi_html("🗂️", "Documentos", str(len(df_aud)), "Total registrado", "indigo"),
-            kpi_html("📨", "Recibos enviados", str(recibos), "Por Gmail", "green"),
-            kpi_html("📝", "Memos y actas", str(len(df_aud) - recibos), "Generados en PDF", "amber"),
-            kpi_html("✉️", "Envíos por correo", str(enviados_correo), "Recibos, memos y actas", "sky"),
-        ])
-        espacio(12)
-        with tarjeta("auditoria"):
-            st.dataframe(df_aud.iloc[::-1], hide_index=True, **ancho(st.dataframe))
-            st.download_button("⬇️ Exportar registro (CSV)", data=df_aud.to_csv(index=False).encode("utf-8-sig"), file_name="Auditoria.csv", mime="text/csv")
-        st.caption("Con Google Sheets conectado, cada registro se guarda también en la hoja «Auditoria».")
-    else:
-        estado_vacio(IMG_REPORTE, "El registro está limpio", "Los recibos enviados, memorándums y actas aparecerán aquí.")
+    encabezado_pagina("🗂️", "Historial", "Planillas guardadas como respaldo y registro de recibos, memorándums y actas.")
+    tab_planillas, tab_docs = st.tabs(["💾 Planillas guardadas", "🗂️ Documentos y envíos"])
+
+    with tab_planillas:
+        if "hist_cache" not in ss:
+            ss["hist_cache"] = cargar_historial_planillas()
+        registros = ss["hist_cache"]
+        if registros is None:
+            registros = [f for filas_h in ss["historial_local"].values() for f in filas_h]
+            st.info("Sin conexión con Google Sheets: se muestran solo las planillas guardadas en esta sesión.")
+        r1, _ = columnas([1, 3], "center")
+        r1.button("🔄 Actualizar historial", on_click=lambda: st.session_state.pop("hist_cache", None), **ancho(st.button))
+        if registros:
+            df_h = pd.DataFrame(registros)
+            for c in ("Ventas", "Sueldo_Neto", "Comision", "Bonos", "Descuentos", "Renta", "Total", "Servicios"):
+                if c in df_h.columns:
+                    df_h[c] = df_h[c].map(_a_numero).fillna(0.0)
+            periodos = list(dict.fromkeys(df_h["Periodo"].tolist()))[::-1]
+            periodo_sel = st.selectbox("Período", periodos, key="hist_periodo")
+            sub = df_h[df_h["Periodo"] == periodo_sel]
+            fila_kpis([
+                kpi_html("🧾", "Total pagado", usd(sub["Total"].sum()), f"{len(sub)} colaboradores", "indigo", "prim"),
+                kpi_html("💰", "Ventas del período", usd(sub["Ventas"].sum()), f"{int(sub['Servicios'].sum())} servicios", "green"),
+                kpi_html("💼", "Comisiones", usd(sub["Comision"].sum()), f"Sueldos netos {usd(sub['Sueldo_Neto'].sum())}", "sky"),
+                kpi_html("💾", "Guardado", html.escape(_texto(sub["Guardado"].iloc[0]) if "Guardado" in sub.columns and len(sub) else "—"), "Fecha del respaldo", "violet"),
+            ])
+            espacio(8)
+            with tarjeta("historial_planillas"):
+                vista_h = sub.drop(columns=[c for c in ("Periodo", "Guardado") if c in sub.columns]).rename(columns={
+                    "Forma_Pago": "Forma de pago", "Sueldo_Neto": "Sueldo neto", "Comision": "Comisión"})
+                formatos = {c: "${:,.2f}" for c in ("Ventas", "Sueldo neto", "Comisión", "Bonos", "Descuentos", "Renta", "Total") if c in vista_h.columns}
+                st.dataframe(vista_h.style.format(formatos), hide_index=True, **ancho(st.dataframe))
+                st.download_button("⬇️ Descargar este período (CSV)", data=sub.to_csv(index=False).encode("utf-8-sig"),
+                                   file_name=f"Historial_{nombre_archivo('', periodo_sel).strip('_').replace('.pdf', '')}.csv", mime="text/csv")
+            if len(periodos) > 1:
+                with tarjeta("historial_resumen"):
+                    md(titulo_seccion("📈 Comparativo entre períodos", "Total pagado y ventas de cada planilla guardada"))
+                    comp = (df_h.groupby("Periodo", sort=False).agg(Ventas=("Ventas", "sum"), Pagado=("Total", "sum"), Colaboradores=("Colaborador", "count"))
+                            .reset_index().iloc[::-1])
+                    comp["% de ventas"] = (comp["Pagado"] / comp["Ventas"].where(comp["Ventas"] > 0) * 100).fillna(0.0)
+                    st.dataframe(comp.style.format({"Ventas": "${:,.2f}", "Pagado": "${:,.2f}", "% de ventas": "{:.1f}%"}), hide_index=True, **ancho(st.dataframe))
+        else:
+            estado_vacio(img_reporte(), "Todavía no hay planillas guardadas",
+                         "En Planillas, después de revisar los montos, pulsa «☁️ Guardar en historial». Así queda un respaldo de cada quincena o mes.")
+
+    with tab_docs:
+        historial = ss["historial_auditoria"]
+        if historial:
+            df_aud = pd.DataFrame(historial)
+            recibos = int(df_aud["Tipo Documento"].str.startswith("Recibo").sum())
+            enviados_correo = int(df_aud["Tipo Documento"].str.contains("enviado|Recibo", case=False, regex=True).sum())
+            fila_kpis([
+                kpi_html("🗂️", "Registros", str(len(df_aud)), "Total registrado", "indigo"),
+                kpi_html("📨", "Recibos enviados", str(recibos), "Por Gmail", "green"),
+                kpi_html("📝", "Memos, actas y planillas", str(len(df_aud) - recibos), "Generados o guardados", "amber"),
+                kpi_html("✉️", "Envíos por correo", str(enviados_correo), "Recibos, memos y actas", "sky"),
+            ])
+            espacio(12)
+            with tarjeta("auditoria"):
+                st.dataframe(df_aud.iloc[::-1], hide_index=True, **ancho(st.dataframe))
+                st.download_button("⬇️ Exportar registro (CSV)", data=df_aud.to_csv(index=False).encode("utf-8-sig"), file_name="Auditoria.csv", mime="text/csv")
+            st.caption("Con Google Sheets conectado, cada registro se guarda también en la hoja «Auditoria».")
+        else:
+            estado_vacio(img_reporte(), "El registro está limpio", "Los recibos enviados, memorándums, actas y planillas guardadas aparecerán aquí.")
 
 elif pagina == "Configuración":
-    encabezado_pagina("⚙️", "Configuración", "Personal y sueldos, salario mínimo y reglas de cálculo, apariencia de la app y respaldos.")
-    tab_p, tab_s, tab_a, tab_r = st.tabs(["👥 Personal y sueldos", "💵 Salario mínimo y reglas", "🎨 Apariencia y empresa", "💾 Respaldo y conexión"])
+    encabezado_pagina("⚙️", "Configuración", "Personal y forma de pago, salario mínimo y reglas, apariencia de la app, respaldo y conexión con Google Sheets.")
+    tab_p, tab_s, tab_a, tab_r = st.tabs(["👥 Personal y sueldos", "💵 Salario mínimo y reglas", "🎨 Apariencia y empresa", "☁️ Respaldo y conexión"])
 
     # ---------------- Personal y sueldos ----------------
     with tab_p:
@@ -2799,9 +3557,8 @@ elif pagina == "Configuración":
         for n, i in ss["empleados"].items():
             es_porc = "Porcentaje" in i.get("mod", "")
             d = desglose_sueldo(0.0 if es_porc else sueldo_neto_de(i))
-            filas_p.append({"Colaborador": n, "Cargo": i.get("cargo", ""), "Rol": i.get("rol", ""), "Modalidad": modalidad_corta(i.get("mod", "")),
+            filas_p.append({"Colaborador": n, "Cargo": i.get("cargo", ""), "Rol": i.get("rol", ""), "Forma de pago": forma_pago_texto(i),
                             "Neto quincenal": d["neto_q"], "Neto mensual": d["neto_m"], "Bruto mensual": d["bruto_m"], "Renta mensual": d["renta_m"],
-                            "Comisión": f"{float(i.get('porc', 0) or 0):g}% de ventas" if es_porc else ("Extras" if "Estándar" in i.get("mod", "") else "—"),
                             "Correo": i.get("correo", "")})
         df_p = pd.DataFrame(filas_p)
         fila_kpis([
@@ -2812,33 +3569,53 @@ elif pagina == "Configuración":
         ])
         espacio(10)
         with tarjeta("personal_tabla"):
-            md(titulo_seccion("Sueldos del personal", "Lo que se le paga a cada persona por quincena y por mes. Las comisiones se suman aparte en la planilla."))
+            md(titulo_seccion("Sueldos y forma de pago del personal", "Lo que se le paga a cada persona por quincena y por mes. Las comisiones y porcentajes se suman aparte en la planilla."))
             st.dataframe(df_p.style.format({"Neto quincenal": "${:,.2f}", "Neto mensual": "${:,.2f}", "Bruto mensual": "${:,.2f}", "Renta mensual": "${:,.2f}"}),
                          hide_index=True, **ancho(st.dataframe))
 
         espacio(10)
-        if "fe_sel" not in ss or ss.get("fe_recargar") or ss.get("fe_sel") not in [NUEVO_EMP] + list(ss["empleados"].keys()):
-            if ss.get("fe_sel") not in [NUEVO_EMP] + list(ss["empleados"].keys()):
+        opciones_emp = [NUEVO_EMP] + list(ss["empleados"].keys())
+        if "fe_sel" not in ss or ss.get("fe_recargar") or ss.get("fe_sel") not in opciones_emp:
+            if ss.get("fe_sel") not in opciones_emp:
                 ss["fe_sel"] = NUEVO_EMP
             cargar_form_empleado()
             ss["fe_recargar"] = False
+        info_sel = ss["empleados"].get(ss.get("fe_sel"), {})
         c_form, c_prev = st.columns([1.7, 1])
         with c_form:
             with tarjeta("form_emp"):
                 md(titulo_seccion("➕ Agregar o ✏️ editar colaborador", "Elige una persona para editarla, o «Nuevo colaborador» para registrar a alguien."))
-                st.selectbox("Colaborador", [NUEVO_EMP] + list(ss["empleados"].keys()), key="fe_sel", on_change=cargar_form_empleado)
-                a, b = st.columns(2)
+                st.selectbox("Colaborador", opciones_emp, key="fe_sel", on_change=cargar_form_empleado)
+                a, b, c = st.columns([1.4, 1.2, 1])
                 a.text_input("Nombre completo *", key="fe_nombre")
-                b.text_input("Cargo / puesto", key="fe_cargo", placeholder="Ej. Masajista, Cosmetóloga, Administrador")
-                a, b, c = st.columns(3)
-                a.selectbox("Rol", ROLES, key="fe_rol")
-                b.selectbox("Modalidad de pago", MODALIDADES, key="fe_mod")
-                c.number_input("% de comisión", min_value=0.0, max_value=100.0, step=1.0, format="%.0f", key="fe_porc", help="Solo aplica en «Porcentaje Directo».")
-                md(titulo_seccion("Sueldo base", "Escríbelo como neto por quincena o como bruto mensual (igual que el salario mínimo)."))
-                a, b = st.columns([1.3, 1])
-                a.radio("Ingresar el sueldo como", [MODO_NETO_Q, MODO_BRUTO_M], key="fe_modo_sueldo", horizontal=True, on_change=convertir_modo_sueldo)
-                b.number_input("Monto", min_value=0.0, step=0.01, format="%.2f", key="fe_sueldo")
-                st.button(f"🇸🇻 Usar el salario mínimo vigente ({usd(aj('salario_minimo'))} al mes)", on_click=usar_salario_minimo)
+                b.text_input("Cargo / puesto", key="fe_cargo", placeholder="Ej. Masajista, Cosmetóloga")
+                c.selectbox("Rol", ROLES, key="fe_rol")
+
+                md(titulo_seccion("Forma de pago", "Elige si la persona cobra con sueldo base o con un porcentaje de lo que vende."))
+                st.radio("Forma de pago", MODALIDADES, key="fe_mod", horizontal=True, format_func=lambda m: MOD_ETIQUETAS.get(m, m),
+                         on_change=cambio_forma_pago_form, label_visibility="collapsed")
+                mod_form = ss.get("fe_mod", MOD_ESTANDAR)
+                st.caption(MOD_AYUDA.get(mod_form, ""))
+                usa_porc_form = mod_form == MOD_PORCENTAJE or (mod_form == MOD_FIJO and ss.get("fe_rol") == "Operativo")
+                if usa_porc_form:
+                    porc_guardado = _a_numero(info_sel.get("porc"))
+                    sembrar("fe_porc", float(porc_guardado) if porc_guardado else (20.0 if mod_form == MOD_PORCENTAJE else 0.0))
+                    p1, p2 = columnas([1, 2], "center")
+                    p1.number_input("Porcentaje de comisión (%)" if mod_form == MOD_PORCENTAJE else "Comisión adicional sobre ventas (%)",
+                                    min_value=0.0, max_value=100.0, step=1.0, format="%.0f", key="fe_porc")
+                    porc_ej = float(ss.get("fe_porc") or 0)
+                    md("<div class='chips'>" + chip(f"Ejemplo: si vende {usd(1000)} en el período, gana {usd(1000 * porc_ej / 100)}", "violet") + "</div>", p2)
+                if mod_form != MOD_PORCENTAJE:
+                    md(titulo_seccion("Sueldo base", "Escríbelo como neto por quincena o como bruto mensual (igual que el salario mínimo)."))
+                    sembrar("fe_modo_sueldo", MODO_NETO_Q)
+                    sembrar("fe_modo_prev", ss["fe_modo_sueldo"])
+                    neto_guardado = sueldo_neto_de(info_sel) if info_sel and sueldo_neto_de(info_sel) > 0 else neto_q_desde_bruto_mensual(aj("salario_minimo"))
+                    sembrar("fe_sueldo", float(neto_guardado if ss["fe_modo_sueldo"] == MODO_NETO_Q else round(neto_guardado / factor_neto() * 2, 2)))
+                    a, b = columnas([1.3, 1], "bottom")
+                    a.radio("Ingresar el sueldo como", [MODO_NETO_Q, MODO_BRUTO_M], key="fe_modo_sueldo", horizontal=True, on_change=convertir_modo_sueldo)
+                    b.number_input("Monto", min_value=0.0, step=0.01, format="%.2f", key="fe_sueldo")
+                    st.button(f"🇸🇻 Usar el salario mínimo vigente ({usd(aj('salario_minimo'))} al mes)", on_click=usar_salario_minimo)
+
                 md(titulo_seccion("Datos de contacto y pago"))
                 a, b, c = st.columns(3)
                 a.text_input("Correo electrónico", key="fe_correo", placeholder="nombre@correo.com")
@@ -2866,9 +3643,12 @@ elif pagina == "Configuración":
                             st.button("Cancelar", on_click=cancelar_borrar_empleado, key="btn_borrar_emp_no", **ancho(st.button))
         with c_prev:
             with tarjeta("prev_sueldo"):
-                md(titulo_seccion("🧮 Vista previa del sueldo", "Así quedará el pago fijo de esta persona."))
-                if "Porcentaje" in (ss.get("fe_mod") or ""):
-                    md(f"<div class='formula'>En <b>Porcentaje Directo</b> no hay sueldo base ni renta: la persona gana el <b>{float(ss.get('fe_porc') or 0):g}%</b> de lo que vende en el período.</div>")
+                md(titulo_seccion("🧮 Vista previa del pago", "Así quedará el pago fijo de esta persona."))
+                mod_form = ss.get("fe_mod", MOD_ESTANDAR)
+                if mod_form == MOD_PORCENTAJE:
+                    porc_prev = float(ss.get("fe_porc") or 0)
+                    md(f"<div class='formula'>En <b>porcentaje de ventas</b> no hay sueldo base ni renta: la persona gana el <b>{porc_prev:g}%</b> de lo que vende en el período.<br>"
+                       f"Ventas de {usd(500)} → {usd(500 * porc_prev / 100)} · Ventas de {usd(2000)} → {usd(2000 * porc_prev / 100)}</div>")
                 else:
                     d = desglose_sueldo(neto_q_formulario())
                     md(tabla_sueldo_html(d))
@@ -2878,7 +3658,9 @@ elif pagina == "Configuración":
                         md("<div class='chips'>" + chip(f"⚠️ Por debajo del mínimo neto quincenal ({usd(minimo_q)})", "amber") + "</div>")
                     else:
                         md("<div class='chips'>" + chip(f"✅ Cumple el salario mínimo ({minimo_txt} al mes)", "green") + "</div>")
-                    md(f"<div class='formula'>Bruto = neto ÷ {factor_neto():.2f} · Renta = bruto × {aj('renta_pct'):g}% · "
+                    extra_txt = (f"Además cobra el {float(ss.get('fe_porc') or 0):g}% de lo que vende." if mod_form == MOD_FIJO and float(ss.get("fe_porc") or 0) > 0
+                                 else ("Además cobra los extras de cada servicio mayor a " + usd(umbral_extra()) + "." if mod_form == MOD_ESTANDAR else "Sin comisiones."))
+                    md(f"<div class='formula'>Bruto = neto ÷ {factor_neto():.2f} · Renta = bruto × {aj('renta_pct'):g}%.<br>{extra_txt}<br>"
                        f"<b>En la planilla:</b> neto quincenal × quincenas del reporte + comisiones + bonos − descuentos.</div>")
 
         espacio(10)
@@ -2891,7 +3673,7 @@ elif pagina == "Configuración":
                 column_config={
                     "Nombre": st.column_config.TextColumn("Nombre", required=True),
                     "rol": st.column_config.SelectboxColumn("Rol", options=ROLES, required=True),
-                    "mod": st.column_config.SelectboxColumn("Modalidad", options=MODALIDADES, required=True, width="medium"),
+                    "mod": st.column_config.SelectboxColumn("Forma de pago", options=MODALIDADES, required=True, width="medium"),
                     "sueldo_base_neto": st.column_config.NumberColumn("Sueldo neto quincenal", min_value=0.0, step=0.01, format="$%.2f"),
                     "porc": st.column_config.NumberColumn("% Comisión", min_value=0, max_value=100, step=1, format="%.0f"),
                     "alias": st.column_config.TextColumn("Alias en el PDF"),
@@ -2909,10 +3691,10 @@ elif pagina == "Configuración":
                     if not nombre:
                         continue
                     previo = anteriores.get(nombre, {})
-                    datos = dict(previo)
-                    datos.update({"rol": r.get("rol"), "mod": r.get("mod"), "porc": r.get("porc"), "sueldo_base_neto": r.get("sueldo_base_neto"),
-                                  "alias": r.get("alias"), "correo": r.get("correo"), "dui": r.get("dui"), "cuenta": r.get("cuenta")})
-                    info_n = _empleado_normalizado(datos)
+                    datos_emp_tabla = dict(previo)
+                    datos_emp_tabla.update({"rol": r.get("rol"), "mod": r.get("mod"), "porc": r.get("porc"), "sueldo_base_neto": r.get("sueldo_base_neto"),
+                                            "alias": r.get("alias"), "correo": r.get("correo"), "dui": r.get("dui"), "cuenta": r.get("cuenta")})
+                    info_n = _empleado_normalizado(datos_emp_tabla)
                     nuevos[nombre] = info_n
                     if (not previo or previo.get("rol") != info_n["rol"] or previo.get("mod") != info_n["mod"]
                             or sueldo_neto_de(previo) != info_n["sueldo_base_neto"]):
@@ -2935,10 +3717,9 @@ elif pagina == "Configuración":
                 md(titulo_seccion("🇸🇻 Salario mínimo de referencia", FUENTE_SALARIO_MINIMO))
                 st.number_input("Salario mínimo mensual (bruto)", min_value=0.0, step=0.01, format="%.2f", value=float(aj("salario_minimo")),
                                 key="aj_salario_minimo", on_change=actualizar_ajuste, args=("salario_minimo", "aj_salario_minimo"))
-                d_min = desglose_sueldo(neto_q_desde_bruto_mensual(aj("salario_minimo")))
-                md(tabla_sueldo_html(d_min))
+                md(tabla_sueldo_html(desglose_sueldo(neto_q_desde_bruto_mensual(aj("salario_minimo")))))
                 st.caption("Sin AFP ni ISSS: solo se retiene la renta configurada. Antes de cambiar el monto, confírmalo con el Ministerio de Trabajo (MTPS).")
-                confirmar_min = st.checkbox("Confirmo actualizar el sueldo de todos los operativos (Estándar y Fijo) al salario mínimo", key="conf_aplicar_min")
+                confirmar_min = st.checkbox("Confirmo actualizar el sueldo de los operativos con sueldo base al salario mínimo", key="conf_aplicar_min")
                 if st.button("Aplicar salario mínimo a los operativos", type="primary", disabled=not confirmar_min):
                     neto_min = neto_q_desde_bruto_mensual(aj("salario_minimo"))
                     nuevos, cambiados = {}, []
@@ -2963,8 +3744,8 @@ elif pagina == "Configuración":
                                 key="aj_retencion_pub_pct", on_change=actualizar_ajuste, args=("retencion_pub_pct", "aj_retencion_pub_pct", True))
                 st.number_input("Retención de renta sobre el sueldo (%)", min_value=0.0, max_value=90.0, step=1.0, format="%.0f", value=float(aj("renta_pct")),
                                 key="aj_renta_pct", on_change=actualizar_ajuste, args=("renta_pct", "aj_renta_pct", True))
-                md(f"<div class='formula'><b>Estándar:</b> por cada servicio mayor a {usd(umbral_extra())} → extra = precio − {usd(umbral_extra())}; comisión = extra − {aj('retencion_pub_pct'):g}%.<br>"
-                   f"<b>Porcentaje:</b> comisión = ventas × %; sin sueldo base ni renta.<br>"
+                md(f"<div class='formula'><b>Sueldo + extras:</b> por cada servicio mayor a {usd(umbral_extra())} → extra = precio − {usd(umbral_extra())}; comisión = extra − {aj('retencion_pub_pct'):g}%.<br>"
+                   f"<b>Porcentaje de ventas:</b> comisión = ventas × % de la persona; sin sueldo base ni renta.<br>"
                    f"<b>Sueldo:</b> bruto = neto ÷ {factor_neto():.2f}; renta = bruto × {aj('renta_pct'):g}%.</div>")
                 espacio(6)
                 st.button("↩️ Restaurar reglas oficiales ($60 · 25% · 10%)", on_click=restaurar_reglas)
@@ -2980,7 +3761,7 @@ elif pagina == "Configuración":
         c1, c2 = st.columns([1.3, 1])
         with c1:
             with tarjeta("tema"):
-                md(titulo_seccion("🎨 Color de la aplicación", "Se aplica al instante en el menú, botones, tarjetas y gráficos."))
+                md(titulo_seccion("🎨 Color de la aplicación", "Se aplica al instante en el menú, botones, tarjetas, gráficos e ilustraciones."))
                 swatches = "".join(f"<span class='sw {'on' if nombre_t == aj('tema') else ''}'><i style='background:linear-gradient(135deg,{t['p']},{t['acc']})'></i>{nombre_t}</span>"
                                    for nombre_t, t in TEMAS.items())
                 md(f"<div class='swatches'>{swatches}</div>")
@@ -2989,12 +3770,37 @@ elif pagina == "Configuración":
                          on_change=actualizar_ajuste, args=("tema", "aj_tema"))
                 st.toggle("Mostrar el banner de bienvenida en el Panel general", value=bool(aj("mostrar_hero")), key="aj_mostrar_hero",
                           on_change=actualizar_ajuste, args=("mostrar_hero", "aj_mostrar_hero"))
+            with tarjeta("logo"):
+                md(titulo_seccion("🖼️ Logo de la empresa", "Aparece en el menú y en todos los PDF (recibos, planillas, memorándums y actas)."))
+                l1, l2 = columnas([1, 3], "center")
+                md(f"<div class='brand' style='border:none;padding:0;margin:0'><img src='{img_logo()}' alt=''/></div>", l1)
+                with l2:
+                    archivo_logo = st.file_uploader("Subir logo (PNG o JPG)", type=["png", "jpg", "jpeg"], key="up_logo")
+                if archivo_logo is not None and st.button("Usar este logo", type="primary", key="btn_logo"):
+                    try:
+                        imagen = Image.open(archivo_logo).convert("RGBA")
+                        logo_b64 = ""
+                        for lado in (320, 240, 180, 128):
+                            copia = imagen.copy()
+                            copia.thumbnail((lado, lado))
+                            buffer = io.BytesIO()
+                            copia.save(buffer, format="PNG", optimize=True)
+                            logo_b64 = base64.b64encode(buffer.getvalue()).decode("ascii")
+                            if len(logo_b64) <= 45000:
+                                break
+                        ss["ajustes"]["logo_b64"] = logo_b64
+                        notificar("Logo actualizado. Pulsa «Guardar apariencia y empresa» para conservarlo en la nube.", "🖼️")
+                        st.rerun()
+                    except Exception as ex:
+                        st.error(f"No se pudo leer la imagen: {ex}")
+                if _texto(aj("logo_b64")):
+                    st.button("Quitar logo", on_click=quitar_logo, key="btn_quitar_logo")
         with c2:
             with tarjeta("empresa"):
                 md(titulo_seccion("🏢 Datos de la empresa", "Aparecen en recibos, planillas, memorándums, actas y correos."))
                 st.text_input("Razón social", value=aj("empresa_nombre"), key="aj_empresa_nombre", on_change=actualizar_ajuste, args=("empresa_nombre", "aj_empresa_nombre"))
                 st.text_input("Nombre corto (menú y encabezados)", value=aj("empresa_corto"), key="aj_empresa_corto", on_change=actualizar_ajuste, args=("empresa_corto", "aj_empresa_corto"))
-                st.text_area("Firma de los correos", value=aj("firma_correo"), key="aj_firma_correo", height=80, on_change=actualizar_ajuste, args=("firma_correo", "aj_firma_correo"))
+                st.text_area("Firma de los correos", value=aj("firma_correo"), key="aj_firma_correo", height=90, on_change=actualizar_ajuste, args=("firma_correo", "aj_firma_correo"))
         espacio(8)
         if st.button("☁️ Guardar apariencia y empresa en Google Sheets", key="guardar_aj_a"):
             if guardar_ajustes(ss["ajustes"]):
@@ -3004,13 +3810,72 @@ elif pagina == "Configuración":
 
     # ---------------- Respaldo y conexión ----------------
     with tab_r:
-        c1, c2 = st.columns(2)
+        c1, c2 = st.columns([1.1, 1])
         with c1:
+            with tarjeta("conexion"):
+                md(titulo_seccion("☁️ Conexión con Google Sheets y Gmail", "Estado de cada pieza. Si algo falta, sigue la guía paso a paso de abajo."))
+                conectado = _documento() is not None
+                ss["sheets_ok"] = conectado
+                correo_cuenta = _texto(secreto("gcp_service_account", "client_email"))
+                estados = [
+                    ("Credenciales de Google (cuenta de servicio)", bool(secreto("gcp_service_account"))),
+                    ("Enlace de la hoja de cálculo", bool(_texto(secreto("gsheets", "url")))),
+                    ("Conexión con Google Sheets", conectado),
+                    ("Correo de Gmail para envíos", bool(_texto(secreto("EMAIL_USER"))) and bool(_texto(secreto("EMAIL_PASS")))),
+                ]
+                md("<div class='chips' style='flex-direction:column;align-items:flex-start'>" + "".join(
+                    chip(("✅ " if ok else "❌ ") + etiqueta, "green" if ok else "red") for etiqueta, ok in estados) + "</div>")
+                if correo_cuenta:
+                    st.caption("Comparte tu hoja de cálculo como Editor con este correo:")
+                    st.code(correo_cuenta, language=None)
+                if not conectado and secreto("gcp_service_account"):
+                    detalle = error_conexion()
+                    if detalle:
+                        st.caption(f"Detalle técnico: {detalle[:300]}")
+                k1, k2 = st.columns(2)
+                if k1.button("🔌 Reintentar conexión", **ancho(st.button)):
+                    _abrir_documento.clear()
+                    ss.pop("sheets_ok", None)
+                    notificar("Conexión reintentada.", "🔌")
+                    st.rerun()
+                if k2.button("✉️ Probar Gmail", **ancho(st.button)):
+                    try:
+                        servidor_prueba, _ = abrir_smtp()
+                        servidor_prueba.quit()
+                        st.toast("Gmail conectado correctamente.", icon="✅")
+                    except Exception as ex:
+                        st.error(f"Gmail no respondió: {ex}")
+                k3, k4 = st.columns(2)
+                if k3.button("🧱 Preparar hoja de cálculo", type="primary", disabled=not conectado, **ancho(st.button),
+                             help="Crea las pestañas Personal, Proveedores, Ajustes, Auditoria e Historial_Planillas con sus encabezados y guarda los datos actuales."):
+                    resultados = preparar_hoja_calculo()
+                    if resultados and all(resultados.values()):
+                        st.toast("Hoja de cálculo lista: todas las pestañas creadas.", icon="🧱")
+                    else:
+                        fallidas = [h for h, ok in (resultados or {}).items() if not ok]
+                        st.error("No se pudieron preparar estas pestañas: " + (", ".join(fallidas) if fallidas else "sin conexión"))
+                if k4.button("⬇️ Recargar desde Sheets", disabled=not conectado, **ancho(st.button)):
+                    ss["empleados"], ss["fuente_personal"] = cargar_empleados()
+                    ss["proveedores"] = cargar_proveedores()
+                    ss["ajustes"] = cargar_ajustes()
+                    ss["historial_auditoria"] = cargar_auditoria()
+                    ss.pop("hist_cache", None)
+                    for k in AJUSTES_POR_DEFECTO:
+                        ss.pop(f"aj_{k}", None)
+                    inicializar_empleados()
+                    recalcular_todo()
+                    ss["fe_recargar"] = True
+                    notificar(f"Datos recargados ({ss['fuente_personal']}).", "☁️")
+                    st.rerun()
+            with st.expander("📘 Guía paso a paso para conectar Google Sheets y Gmail", expanded=not conectado):
+                md(GUIA_CONEXION_HTML)
+                st.code(PLANTILLA_SECRETS, language="toml")
+        with c2:
             with tarjeta("respaldo"):
-                md(titulo_seccion("💾 Respaldo de datos", "Descarga una copia de personal, proveedores, ajustes y auditoría, o restáurala."))
-                respaldo = {"version": 1, "fecha": ahora_sv().strftime("%Y-%m-%d %H:%M"), "empleados": ss["empleados"], "proveedores": ss["proveedores"],
-                            "ajustes": ss["ajustes"], "auditoria": ss["historial_auditoria"]}
-                st.download_button("⬇️ Descargar respaldo (JSON)", data=json.dumps(respaldo, ensure_ascii=False, indent=2, default=str).encode("utf-8"),
+                md(titulo_seccion("💾 Respaldo de datos", "Copia completa de personal, proveedores, ajustes, auditoría e historial de esta sesión."))
+                respaldo = {"version": 4, "fecha": ahora_sv().strftime("%Y-%m-%d %H:%M"), "empleados": ss["empleados"], "proveedores": ss["proveedores"],
+                            "ajustes": ss["ajustes"], "auditoria": ss["historial_auditoria"], "historial_planillas": ss["historial_local"]}
+                st.download_button("⬇️ Descargar respaldo completo (JSON)", data=json.dumps(respaldo, ensure_ascii=False, indent=2, default=str).encode("utf-8"),
                                    file_name=f"Respaldo_{nombre_archivo('', aj('empresa_corto')).strip('_').replace('.pdf', '')}_{ahora_sv().strftime('%Y-%m-%d')}.json",
                                    mime="application/json", **ancho(st.download_button))
                 espacio(6)
@@ -3019,10 +3884,7 @@ elif pagina == "Configuración":
                 if archivo_resp is not None and st.button("♻️ Restaurar respaldo", type="primary"):
                     try:
                         datos = json.loads(archivo_resp.getvalue().decode("utf-8"))
-                        emps = datos.get("empleados")
-                        provs = datos.get("proveedores")
-                        ajs = datos.get("ajustes")
-                        aud = datos.get("auditoria")
+                        emps, provs, ajs, aud = datos.get("empleados"), datos.get("proveedores"), datos.get("ajustes"), datos.get("auditoria")
                         if isinstance(ajs, dict):
                             for k in AJUSTES_POR_DEFECTO:
                                 if k in ajs:
@@ -3040,6 +3902,8 @@ elif pagina == "Configuración":
                                 guardar_proveedores(ss["proveedores"])
                         if isinstance(aud, list):
                             ss["historial_auditoria"] = [dict(a) for a in aud if isinstance(a, dict)]
+                        if isinstance(datos.get("historial_planillas"), dict):
+                            ss["historial_local"] = datos["historial_planillas"]
                         if isinstance(emps, dict) and emps:
                             restaurados = {_texto(n): _empleado_normalizado(i) for n, i in emps.items() if _texto(n) and isinstance(i, dict)}
                             if restaurados:
@@ -3049,30 +3913,11 @@ elif pagina == "Configuración":
                         st.rerun()
                     except Exception as ex:
                         st.error(f"No se pudo leer el respaldo: {ex}")
-        with c2:
-            with tarjeta("conexion"):
-                md(titulo_seccion("☁️ Conexión con Google Sheets", "Personal, Proveedores, Ajustes y Auditoria se guardan en tu hoja de cálculo."))
-                conectado = _documento() is not None
-                ss["sheets_ok"] = conectado
-                fuente = html.escape(ss.get("fuente_personal", "—"))
-                if conectado:
-                    md("<div class='chips'>" + chip("✅ Conectado a Google Sheets", "green") + chip(f"Personal cargado desde: {fuente}", "indigo") + "</div>")
-                else:
-                    st.warning("⚠️ **MODO LOCAL ACTIVADO:** no se detectan credenciales de Google Cloud o no hay conexión. Los cambios no se guardan en la nube.")
-                k1, k2 = st.columns(2)
-                if k1.button("🔌 Reintentar conexión", **ancho(st.button)):
-                    _abrir_documento.clear()
-                    ss.pop("sheets_ok", None)
-                    notificar("Conexión reintentada.", "🔌")
-                    st.rerun()
-                if k2.button("⬇️ Recargar desde Sheets", **ancho(st.button)):
-                    ss["empleados"], ss["fuente_personal"] = cargar_empleados()
-                    ss["proveedores"] = cargar_proveedores()
-                    ss["ajustes"] = cargar_ajustes()
-                    for k in AJUSTES_POR_DEFECTO:
-                        ss.pop(f"aj_{k}", None)
-                    inicializar_empleados()
-                    recalcular_todo()
-                    ss["fe_recargar"] = True
-                    notificar(f"Datos recargados ({ss['fuente_personal']}).", "☁️")
-                    st.rerun()
+            with tarjeta("plan_respaldo"):
+                md(titulo_seccion("🛡️ Plan de respaldo recomendado") + "<div class='tips'>"
+                   "<div class='tip'><span>1️⃣</span>Cada quincena, en Planillas, pulsa «☁️ Guardar en historial» después de revisar los montos.</div>"
+                   "<div class='tip'><span>2️⃣</span>Cada mes descarga aquí el respaldo completo (JSON) y guárdalo en una carpeta de Google Drive.</div>"
+                   "<div class='tip'><span>3️⃣</span>En Google Sheets usa «Archivo → Historial de versiones» para volver a cualquier día, y «Archivo → Hacer una copia» al cierre de cada mes.</div>"
+                   "<div class='tip'><span>4️⃣</span>Guarda también los PDF de ventas originales en Drive, por mes.</div></div>")
+
+pie_pagina()
