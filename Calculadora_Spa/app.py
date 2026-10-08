@@ -37,14 +37,12 @@ MOD_PORCENTAJE = "Porcentaje Directo (%)"
 MOD_FIJO = "Fijo"
 MODALIDADES = [MOD_ESTANDAR, MOD_PORCENTAJE, MOD_FIJO]
 ROLES = ["Operativo", "Administrativo"]
-# Solo se usa para rellenar un sueldo que venga vacío en Google Sheets; cada persona tiene el suyo.
 SUELDO_NETO_POR_DEFECTO = {"Operativo": 183.96, "Administrativo": 300.00}
 
 DIAS = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
 MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
          "septiembre", "octubre", "noviembre", "diciembre"]
 
-# Palabras clave para reconocer las columnas del reporte de ventas (sin tildes, en mayúsculas)
 CLAVES_PROFESIONAL = ("PROFESIONAL", "COLABORADOR", "EMPLEADO", "ESTILISTA", "TERAPEUTA",
                       "ESPECIALISTA", "ATENDIDO", "BARBERO", "MASAJISTA")
 CLAVES_PRECIO = ("PRECIO", "TOTAL", "MONTO", "IMPORTE", "VALOR", "COBRADO", "PAGADO")
@@ -71,49 +69,33 @@ PLOTLY_CONFIG = {"displayModeBar": False, "responsive": True}
 def ahora_sv():
     return datetime.now(ZONA_SV)
 
-
 def _texto(v):
-    """Valor como texto limpio ('' si viene vacío, None o NaN)."""
-    if v is None:
-        return ""
+    if v is None: return ""
     try:
-        if pd.isna(v):
-            return ""
-    except (TypeError, ValueError):
-        pass
+        if pd.isna(v): return ""
+    except (TypeError, ValueError): pass
     t = str(v).strip()
     return "" if t.lower() in ("nan", "none", "nat") else t
-
 
 def _esc(v):
     return html.escape(_texto(v))
 
-
 def _normalizar(v):
-    """Mayúsculas, sin tildes y con espacios simples: 'Jéssica  López' -> 'JESSICA LOPEZ'."""
     t = unicodedata.normalize("NFKD", _texto(v)).encode("ascii", "ignore").decode("ascii")
     return re.sub(r"\s+", " ", t).strip().upper()
 
-
 def _a_numero(v):
-    """Convierte '$1,234.50', 'US$ 60', '60,00', '(15.00)' o 60 a float. None si no hay número."""
-    if v is None or isinstance(v, bool):
-        return None
-    if isinstance(v, (int, float)):
-        return None if pd.isna(v) else float(v)
+    if v is None or isinstance(v, bool): return None
+    if isinstance(v, (int, float)): return None if pd.isna(v) else float(v)
     s = str(v).strip()
-    if not s:
-        return None
-    # Celdas de varias líneas: se usa la primera línea que tenga un número
+    if not s: return None
     for linea in s.splitlines():
         if re.search(r"\d", linea):
             s = linea.strip()
             break
-    else:
-        return None
+    else: return None
     m = re.search(r"\d[\d.,]*", s)
-    if not m:
-        return None
+    if not m: return None
     token = m.group().rstrip(".,")
     prefijo = s[:m.start()]
     negativo = "-" in prefijo or "(" in prefijo
@@ -134,101 +116,68 @@ def _a_numero(v):
         return None
     return -n if negativo else n
 
-
 def _a_porcentaje(v, defecto=0.0):
-    """'20%', '20', 20 o 0.2 -> 20.0"""
     n = _a_numero(v)
-    if n is None:
-        return defecto
-    if 0 < n < 1 and "%" not in _texto(v):
-        n = n * 100.0
+    if n is None: return defecto
+    if 0 < n < 1 and "%" not in _texto(v): n = n * 100.0
     return n
-
 
 def normalizar_modalidad(v):
     n = _normalizar(v)
-    if "ESTANDAR" in n or "RETENCION" in n:
-        return MOD_ESTANDAR
-    if "PORCENTAJE" in n or "%" in n or "COMISION" in n:
-        return MOD_PORCENTAJE
+    if "ESTANDAR" in n or "RETENCION" in n: return MOD_ESTANDAR
+    if "PORCENTAJE" in n or "%" in n or "COMISION" in n: return MOD_PORCENTAJE
     return MOD_FIJO
-
 
 def normalizar_rol(v):
     n = _normalizar(v)
-    if not n or n.startswith("OPERA"):
-        return "Operativo"
-    if n.startswith("ADMIN") or n.startswith("DIRECT") or n.startswith("GEREN"):
-        return "Administrativo"
+    if not n or n.startswith("OPERA"): return "Operativo"
+    if n.startswith("ADMIN") or n.startswith("DIRECT") or n.startswith("GEREN"): return "Administrativo"
     return _texto(v)
 
-
 def alias_efectivo(nombre, info):
-    """Alias configurado; si está vacío se usa el primer nombre (evita que un alias vacío capture todo el reporte)."""
     alias = _texto(info.get("alias"))
-    if alias:
-        return alias
+    if alias: return alias
     for parte in _texto(nombre).split():
-        if len(parte) >= 3 and "." not in parte:
-            return parte
+        if len(parte) >= 3 and "." not in parte: return parte
     return ""
-
 
 def patron_alias(alias):
     partes = [p.strip() for p in _normalizar(alias).split("|") if p.strip()]
     return "|".join(partes)
 
-
 def coincide_alias(nombre_norm, patron):
-    if not patron:
-        return False
-    try:
-        return re.search(patron, nombre_norm) is not None
-    except re.error:
-        return any(p in nombre_norm for p in patron.split("|"))
-
+    if not patron: return False
+    try: return re.search(patron, nombre_norm) is not None
+    except re.error: return any(p in nombre_norm for p in patron.split("|"))
 
 def _parse_fecha_texto(s):
     s = _texto(s)
     for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d/%m/%Y", "%d-%m-%Y"):
-        try:
-            return datetime.strptime(s, fmt)
-        except ValueError:
-            pass
+        try: return datetime.strptime(s, fmt)
+        except ValueError: pass
     return None
-
 
 def _fecha_de_celda(v):
     m = re.search(PATRON_FECHA, _texto(v))
     return _parse_fecha_texto(m.group(1)) if m else None
 
-
 def usd(v):
-    try:
-        return f"${float(v):,.2f}"
-    except (TypeError, ValueError):
-        return "$0.00"
-
+    try: return f"${float(v):,.2f}"
+    except (TypeError, ValueError): return "$0.00"
 
 def nombre_archivo(prefijo, nombre):
     limpio = unicodedata.normalize("NFKD", _texto(nombre)).encode("ascii", "ignore").decode("ascii")
     limpio = re.sub(r"[^A-Za-z0-9]+", "_", limpio).strip("_") or "Colaborador"
     return f"{prefijo}_{limpio}.pdf"
 
-
 def limpiar_texto_pdf(txt):
-    if txt is None:
-        return ""
+    if txt is None: return ""
     return str(txt).encode('latin-1', 'replace').decode('latin-1')
-
 
 def generar_pdf_bytes(pdf_obj):
     return bytes(pdf_obj.output())
 
-
 _CACHE_WIDTH = {}
-
-
 def _api_width_nueva(fn):
     nombre = getattr(fn, "__name__", repr(fn))
     if nombre not in _CACHE_WIDTH:
@@ -239,9 +188,7 @@ def _api_width_nueva(fn):
             _CACHE_WIDTH[nombre] = False
     return _CACHE_WIDTH[nombre]
 
-
 def ancho(fn):
-    """Ancho completo compatible con Streamlit nuevo (width='stretch') y anterior (use_container_width)."""
     return {"width": "stretch"} if _api_width_nueva(fn) else {"use_container_width": True}
 
 
@@ -256,75 +203,48 @@ def _abrir_documento():
     gc = gspread.authorize(credentials)
     return gc.open_by_url(st.secrets["gsheets"]["url"])
 
-
 def _documento():
-    # Los errores no se guardan en caché: si la conexión falla, se reintenta después.
-    try:
-        return _abrir_documento()
-    except Exception:
-        return None
-
+    try: return _abrir_documento()
+    except Exception: return None
 
 def conectar_gsheets(nombre_hoja="Personal", crear=False):
     doc = _documento()
-    if doc is None:
-        return None
-    try:
-        return doc.worksheet(nombre_hoja)
+    if doc is None: return None
+    try: return doc.worksheet(nombre_hoja)
     except gspread.exceptions.WorksheetNotFound:
-        if nombre_hoja == "Personal":
-            return doc.sheet1
-        # Nunca se usa sheet1 como reemplazo de otra hoja: al guardar borraría al personal.
+        if nombre_hoja == "Personal": return doc.sheet1
         if crear:
-            try:
-                return doc.add_worksheet(title=nombre_hoja, rows=500, cols=30)
-            except Exception:
-                return None
+            try: return doc.add_worksheet(title=nombre_hoja, rows=500, cols=30)
+            except Exception: return None
         return None
-    except Exception:
-        return None
-
+    except Exception: return None
 
 def _leer_registros(worksheet):
-    try:
-        return worksheet.get_all_records(numericise_ignore=["all"])  # conserva ceros a la izquierda (DUI, cuentas)
-    except TypeError:
-        return worksheet.get_all_records()
-
+    try: return worksheet.get_all_records(numericise_ignore=["all"])
+    except TypeError: return worksheet.get_all_records()
 
 def _valor_para_sheets(v):
     if hasattr(v, "item") and not isinstance(v, (str, bytes)):
-        try:
-            v = v.item()
-        except Exception:
-            pass
+        try: v = v.item()
+        except Exception: pass
     try:
-        if pd.isna(v):
-            return ""
-    except (TypeError, ValueError):
-        pass
-    if isinstance(v, (pd.Timestamp, datetime)):
-        return v.strftime("%Y-%m-%d")
+        if pd.isna(v): return ""
+    except (TypeError, ValueError): pass
+    if isinstance(v, (pd.Timestamp, datetime)): return v.strftime("%Y-%m-%d")
     return v
 
-
 def _registros_validos(datos_list):
-    if not datos_list:
-        return []
+    if not datos_list: return []
     return [r for r in datos_list if any(_valor_para_sheets(v) != "" for v in r.values())]
-
 
 def _escribir_hoja(nombre_hoja, filas):
     worksheet = conectar_gsheets(nombre_hoja, crear=True)
-    if not worksheet:
-        return False
+    if not worksheet: return False
     try:
         worksheet.clear()
         worksheet.update(values=filas, range_name="A1")
         return True
-    except Exception:
-        return False
-
+    except Exception: return False
 
 EMPLEADOS_POR_DEFECTO = {
     "Maydely Hernández": {"rol": "Operativo", "alias": "MAYDELY", "mod": MOD_ESTANDAR, "porc": 20, "sueldo_base_neto": 183.96, "correo": "", "dui": "", "cuenta": ""},
@@ -333,91 +253,68 @@ EMPLEADOS_POR_DEFECTO = {
     "Mario de Paz": {"rol": "Operativo", "alias": "MARIO", "mod": MOD_ESTANDAR, "porc": 20, "sueldo_base_neto": 183.96, "correo": "", "dui": "", "cuenta": ""},
     "Dr. Gio Molina": {"rol": "Administrativo", "alias": "GIO|MARVIN|DOCTOR", "mod": MOD_FIJO, "porc": 0, "sueldo_base_neto": 300.00, "correo": "", "dui": "", "cuenta": ""},
     "Gerson Ulises Molina Flores": {"rol": "Administrativo", "alias": "GERSON", "mod": MOD_FIJO, "porc": 0, "sueldo_base_neto": 300.00, "correo": "", "dui": "", "cuenta": ""},
-    "Edwin Ponce": {"rol": "Administrativo", "alias": "EDWIN", "mod": MOD_FIJO, "porc": 0, "sueldo_base_neto": 300.00, "correo": "", "dui": "", "cuenta": ""},
 }
-
 
 def sueldo_neto_por_defecto(rol):
     return SUELDO_NETO_POR_DEFECTO.get(rol, SUELDO_NETO_POR_DEFECTO["Administrativo"])
 
-
 def _leer_sueldo_neto(registro, rol):
-    """Busca la columna de sueldo en la fila de Sheets (Sueldo_Base_Neto, 'Sueldo base neto', 'Salario'...)."""
     for clave, valor in registro.items():
         n = _normalizar(clave)
         if "SUELDO" in n or "SALARIO" in n:
             numero = _a_numero(valor)
-            if numero is not None:
-                return numero
+            if numero is not None: return numero
     return sueldo_neto_por_defecto(rol)
 
-
 def cargar_empleados():
-    """Devuelve (empleados, fuente). Normaliza rol, modalidad y porcentaje para que los cálculos no fallen por tildes o formatos."""
     worksheet = conectar_gsheets("Personal")
     if worksheet:
         try:
             emp_dict = {}
             for r in _leer_registros(worksheet):
                 nombre = _texto(r.get("Nombre"))
-                if not nombre:
-                    continue
+                if not nombre: continue
                 mod = normalizar_modalidad(r.get("Modalidad", "Fijo"))
                 rol = normalizar_rol(r.get("Rol", "Operativo"))
                 emp_dict[nombre] = {
-                    "rol": rol,
-                    "alias": _texto(r.get("Alias", "")),
-                    "mod": mod,
+                    "rol": rol, "alias": _texto(r.get("Alias", "")), "mod": mod,
                     "porc": _a_porcentaje(r.get("Porcentaje", 0), 20.0 if mod == MOD_PORCENTAJE else 0.0),
                     "sueldo_base_neto": _leer_sueldo_neto(r, rol),
-                    "correo": _texto(r.get("Correo", "")),
-                    "dui": _texto(r.get("DUI", "")),
-                    "cuenta": _texto(r.get("Cuenta", "")),
+                    "correo": _texto(r.get("Correo", "")), "dui": _texto(r.get("DUI", "")), "cuenta": _texto(r.get("Cuenta", "")),
                 }
-            if emp_dict:
-                return emp_dict, "Google Sheets"
-        except Exception:
-            pass
+            if emp_dict: return emp_dict, "Google Sheets"
+        except Exception: pass
     return {k: dict(v) for k, v in EMPLEADOS_POR_DEFECTO.items()}, "Datos locales"
 
-
 def guardar_empleados(datos):
-    if not datos:
-        return False
+    if not datos: return False
     filas = [["Nombre", "Rol", "Alias", "Modalidad", "Porcentaje", "Sueldo_Base_Neto", "Correo", "DUI", "Cuenta"]]
     for nombre, info in datos.items():
         filas.append([_valor_para_sheets(x) for x in [nombre, info.get("rol", ""), info.get("alias", ""), info.get("mod", ""), info.get("porc", 0), sueldo_neto_de(info), info.get("correo", ""), info.get("dui", ""), info.get("cuenta", "")]])
     return _escribir_hoja("Personal", filas)
 
-
 PROVEEDOR_EJEMPLO = {
-    "ID_Proveedor": "1", "Nombre_Proveedor": "JG SUMINISTROS", "Nombre_Contacto": "JULIO CESAR HERNANDEZ POSADA",
-    "Telefono_1": "7398 4751", "Telefono_2": "73984751", "Correo": "jgsuministrossv@gmail.com",
-    "Banco": "Banco Cuscatlan", "Cuenta": "325-301-000002077", "Direccion_1": "Plaza comercial San Antonio, P°. El Carmen",
-    "Direccion_2": "San Salvador", "Pais": "El Salvador", "Patrocinador": "JULIO CESAR HERNANDEZ POSADA",
+    "ID_Proveedor": "1", "Nombre_Proveedor": "JG SUMINISTROS", "Nombre_Contacto": "JULIO CESAR HERNANDEZ",
+    "Telefono_1": "7398 4751", "Telefono_2": "", "Correo": "jgsuministrossv@gmail.com",
+    "Banco": "Banco Cuscatlan", "Cuenta": "325-301-000002077", "Direccion_1": "",
+    "Direccion_2": "San Salvador", "Pais": "El Salvador", "Patrocinador": "",
     "Valoracion": "50%", "Fecha_Ultima_Rev": "", "Fecha_Prox_Rev": "", "Fecha_Contrato": "", "Fecha_Vencimiento": "",
     "Fecha_Calif_Riesgo": "", "Fecha_Diligencia": "", "Fecha_Rev_Contrato": "", "Fecha_Aprobacion": "",
     "Descripcion": "suministros medicos", "Notas": ""
 }
-
 
 def cargar_proveedores():
     worksheet = conectar_gsheets("Proveedores")
     if worksheet:
         try:
             records = _leer_registros(worksheet)
-            if records:
-                return records
-        except Exception:
-            pass
+            if records: return records
+        except Exception: pass
     return [dict(PROVEEDOR_EJEMPLO)]
-
 
 def guardar_proveedores(datos_list, encabezados_si_vacio=None):
     datos_list = _registros_validos(datos_list)
-    if not datos_list:
-        # Solo al eliminar el último proveedor: la hoja queda con los encabezados, sin filas
-        return _escribir_hoja("Proveedores", [list(encabezados_si_vacio)]) if encabezados_si_vacio else False
+    if not datos_list: return _escribir_hoja("Proveedores", [list(encabezados_si_vacio)]) if encabezados_si_vacio else False
     encabezados = list(datos_list[0].keys())
     filas = [encabezados] + [[_valor_para_sheets(item.get(c, "")) for c in encabezados] for item in datos_list]
     return _escribir_hoja("Proveedores", filas)
@@ -437,7 +334,7 @@ except Exception:
 
 
 # =====================================================================
-# 4. ESTADO DE MEMORIA (se inicializa una sola vez; nunca se pisa al navegar)
+# 4. ESTADO DE MEMORIA
 # =====================================================================
 DEFAULTS_GLOBALES = {
     "quincenas_multiplicador": 1.0,
@@ -459,6 +356,7 @@ DEFAULTS_GLOBALES = {
     "uploader_nonce": 0,
     "nonce_editor_prov": 0,
     "nonce_editor_personal": 0,
+    "mostrar_form_proveedor": False,
     "_toasts": [],
     "_errores": [],
 }
@@ -471,18 +369,9 @@ if "empleados" not in st.session_state:
 if "proveedores" not in st.session_state:
     st.session_state["proveedores"] = cargar_proveedores()
 
-
 def sueldo_neto_de(info):
-    """Sueldo neto quincenal individual de la persona (columna sueldo_base_neto de Configuración → Personal)."""
     n = _a_numero(info.get("sueldo_base_neto"))
     return n if n is not None else sueldo_neto_por_defecto(info.get("rol", "Operativo"))
-
-
-def calcular_bruto_acumulado(info, quincenas=None):
-    neto_quincenal = sueldo_neto_de(info)
-    mult = quincenas if quincenas is not None else st.session_state["quincenas_multiplicador"]
-    return round((neto_quincenal * mult) / 0.90, 2)
-
 
 def inicializar_empleados():
     ss = st.session_state
@@ -490,44 +379,32 @@ def inicializar_empleados():
         for pref in ("com_", "extra_bruto_", "ret_pub_", "serv_tot_", "hex_", "desc_"):
             if f"{pref}{emp}" not in ss:
                 ss[f"{pref}{emp}"] = 0.0
-        if f"email_{emp}" not in ss:
-            ss[f"email_{emp}"] = info.get("correo", "")
-        if f"notas_{emp}" not in ss:
-            ss[f"notas_{emp}"] = "Ninguno"
-        if f"base_{emp}" not in ss:
-            ss[f"base_{emp}"] = 0.0 if "Porcentaje" in info.get("mod", "Fijo") else calcular_bruto_acumulado(info)
-
+        if f"email_{emp}" not in ss: ss[f"email_{emp}"] = info.get("correo", "")
+        if f"notas_{emp}" not in ss: ss[f"notas_{emp}"] = "Ninguno"
+        if f"base_net_{emp}" not in ss:
+            # Guardamos la base NETA real que usará el usuario en la interfaz
+            ss[f"base_net_{emp}"] = 0.0 if "Porcentaje" in info.get("mod", "Fijo") else (sueldo_neto_de(info) * ss["quincenas_multiplicador"])
 
 inicializar_empleados()
 
-
 def recalcular_bases():
     for emp, info in st.session_state["empleados"].items():
-        st.session_state[f"base_{emp}"] = 0.0 if "Porcentaje" in info.get("mod", "Fijo") else calcular_bruto_acumulado(info)
+        st.session_state[f"base_net_{emp}"] = 0.0 if "Porcentaje" in info.get("mod", "Fijo") else (sueldo_neto_de(info) * st.session_state["quincenas_multiplicador"])
 
-
-# --- Notificaciones flotantes (sobreviven a st.rerun) ---
 def notificar(msg, icon="✅"):
     st.session_state["_toasts"].append((msg, icon))
 
-
 def notificar_error(msg):
-    """Errores críticos: se muestran fijos en pantalla (no como toast) aunque haya un rerun."""
     st.session_state["_errores"].append(msg)
-
 
 def mostrar_notificaciones():
     pendientes = st.session_state.get("_toasts", [])
     st.session_state["_toasts"] = []
-    for msg, icon in pendientes:
-        st.toast(msg, icon=icon)
+    for msg, icon in pendientes: st.toast(msg, icon=icon)
     errores = st.session_state.get("_errores", [])
     st.session_state["_errores"] = []
-    for msg in errores:
-        st.error(msg)
+    for msg in errores: st.error(msg)
 
-
-# --- Widgets persistentes: el valor canónico vive en session_state y el widget se re-siembra al volver ---
 def campo_persistente(widget_fn, label, state_key, ui_key, conv=None, **kwargs):
     if ui_key not in st.session_state:
         valor_inicial = st.session_state[state_key]
@@ -536,115 +413,37 @@ def campo_persistente(widget_fn, label, state_key, ui_key, conv=None, **kwargs):
     st.session_state[state_key] = valor
     return valor
 
-
-def reiniciar_widgets_planilla(prefijos=("ui_b_", "ui_c_")):
+def reiniciar_widgets_planilla(prefijos=("ui_b_net_", "ui_c_")):
     for emp in st.session_state["empleados"].keys():
         for p in prefijos:
             st.session_state.pop(f"{p}{emp}", None)
 
 
 # =====================================================================
-# 5. IMÁGENES (ilustraciones SVG embebidas: no dependen de internet)
+# 5. IMÁGENES (SVG embebidas)
 # =====================================================================
-def _svg_uri(svg):
-    return "data:image/svg+xml;base64," + base64.b64encode(svg.encode("utf-8")).decode("ascii")
+def _svg_uri(svg): return "data:image/svg+xml;base64," + base64.b64encode(svg.encode("utf-8")).decode("ascii")
 
-
-IMG_LOGO = _svg_uri(
-    "<svg xmlns='http://www.w3.org/2000/svg' width='48' height='48' viewBox='0 0 48 48'>"
-    "<defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='#4F46E5'/><stop offset='1' stop-color='#0EA5E9'/></linearGradient></defs>"
-    "<rect width='48' height='48' rx='14' fill='url(#g)'/>"
-    "<text x='24' y='31' font-family='Arial, sans-serif' font-size='18' font-weight='800' fill='#FFFFFF' text-anchor='middle'>GG</text></svg>"
-)
-
-IMG_HERO = _svg_uri(
-    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 340 220'>"
-    "<defs>"
-    "<linearGradient id='p' x1='0' y1='0' x2='0' y2='1'><stop offset='0' stop-color='#FFFFFF'/><stop offset='1' stop-color='#EEF2FF'/></linearGradient>"
-    "<linearGradient id='b' x1='0' y1='0' x2='0' y2='1'><stop offset='0' stop-color='#818CF8'/><stop offset='1' stop-color='#4F46E5'/></linearGradient>"
-    "<linearGradient id='l' x1='0' y1='0' x2='1' y2='0'><stop offset='0' stop-color='#34D399'/><stop offset='1' stop-color='#22D3EE'/></linearGradient>"
-    "<linearGradient id='c' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='#FDE68A'/><stop offset='1' stop-color='#F59E0B'/></linearGradient>"
-    "</defs>"
-    "<rect x='34' y='26' width='236' height='160' rx='18' fill='url(#p)'/>"
-    "<rect x='54' y='46' width='84' height='9' rx='4.5' fill='#C7D2FE'/>"
-    "<rect x='54' y='62' width='52' height='7' rx='3.5' fill='#E0E7FF'/>"
-    "<rect x='60' y='132' width='18' height='36' rx='5' fill='url(#b)' opacity='.45'/>"
-    "<rect x='90' y='118' width='18' height='50' rx='5' fill='url(#b)' opacity='.6'/>"
-    "<rect x='120' y='124' width='18' height='44' rx='5' fill='url(#b)' opacity='.5'/>"
-    "<rect x='150' y='100' width='18' height='68' rx='5' fill='url(#b)' opacity='.75'/>"
-    "<rect x='180' y='92' width='18' height='76' rx='5' fill='url(#b)' opacity='.85'/>"
-    "<rect x='210' y='72' width='18' height='96' rx='5' fill='url(#b)'/>"
-    "<polyline points='69,118 99,104 129,110 159,86 189,78 219,56' fill='none' stroke='url(#l)' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/>"
-    "<circle cx='219' cy='56' r='7' fill='#FFFFFF' stroke='#22D3EE' stroke-width='3'/>"
-    "<rect x='222' y='112' width='100' height='70' rx='14' fill='#FFFFFF'/>"
-    "<circle cx='252' cy='147' r='17' fill='none' stroke='#E0E7FF' stroke-width='7'/>"
-    "<circle cx='252' cy='147' r='17' fill='none' stroke='#4F46E5' stroke-width='7' stroke-dasharray='70 107' stroke-linecap='round' transform='rotate(-90 252 147)'/>"
-    "<rect x='278' y='136' width='32' height='7' rx='3.5' fill='#C7D2FE'/>"
-    "<rect x='278' y='150' width='22' height='7' rx='3.5' fill='#E0E7FF'/>"
-    "<circle cx='40' cy='170' r='24' fill='url(#c)'/>"
-    "<text x='40' y='179' font-family='Arial, sans-serif' font-size='24' font-weight='700' fill='#FFFFFF' text-anchor='middle'>$</text>"
-    "</svg>"
-)
-
-IMG_REPORTE = _svg_uri(
-    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 150'>"
-    "<defs><linearGradient id='u' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='#6366F1'/><stop offset='1' stop-color='#0EA5E9'/></linearGradient></defs>"
-    "<ellipse cx='100' cy='136' rx='70' ry='8' fill='#E2E8F0'/>"
-    "<rect x='56' y='14' width='86' height='112' rx='12' fill='#FFFFFF' stroke='#C7D2FE' stroke-width='2'/>"
-    "<rect x='70' y='34' width='42' height='7' rx='3.5' fill='#C7D2FE'/>"
-    "<rect x='70' y='48' width='58' height='6' rx='3' fill='#E0E7FF'/>"
-    "<rect x='70' y='60' width='50' height='6' rx='3' fill='#E0E7FF'/>"
-    "<rect x='70' y='72' width='56' height='6' rx='3' fill='#E0E7FF'/>"
-    "<rect x='70' y='90' width='30' height='16' rx='4' fill='#EF4444'/>"
-    "<text x='85' y='101.5' font-family='Arial, sans-serif' font-size='9' font-weight='700' fill='#FFFFFF' text-anchor='middle'>PDF</text>"
-    "<circle cx='146' cy='104' r='22' fill='url(#u)'/>"
-    "<path d='M146 115v-20m-8 8l8-8 8 8' fill='none' stroke='#FFFFFF' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'/>"
-    "</svg>"
-)
-
-IMG_DIRECTORIO = _svg_uri(
-    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 150'>"
-    "<ellipse cx='100' cy='136' rx='70' ry='8' fill='#E2E8F0'/>"
-    "<rect x='50' y='18' width='100' height='108' rx='14' fill='#FFFFFF' stroke='#C7D2FE' stroke-width='2'/>"
-    "<circle cx='100' cy='54' r='17' fill='#EEF2FF'/>"
-    "<circle cx='100' cy='49' r='7' fill='#818CF8'/>"
-    "<path d='M87 66c3-8 23-8 26 0' fill='#818CF8'/>"
-    "<rect x='70' y='84' width='60' height='7' rx='3.5' fill='#C7D2FE'/>"
-    "<rect x='78' y='98' width='44' height='6' rx='3' fill='#E0E7FF'/>"
-    "<circle cx='150' cy='108' r='18' fill='#10B981'/>"
-    "<path d='M141 108l6 6 12-12' fill='none' stroke='#FFFFFF' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'/>"
-    "</svg>"
-)
+IMG_LOGO = _svg_uri("<svg xmlns='http://www.w3.org/2000/svg' width='48' height='48' viewBox='0 0 48 48'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='#4F46E5'/><stop offset='1' stop-color='#0EA5E9'/></linearGradient></defs><rect width='48' height='48' rx='14' fill='url(#g)'/><text x='24' y='31' font-family='Arial, sans-serif' font-size='18' font-weight='800' fill='#FFFFFF' text-anchor='middle'>GG</text></svg>")
+IMG_HERO = _svg_uri("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 340 220'><defs><linearGradient id='p' x1='0' y1='0' x2='0' y2='1'><stop offset='0' stop-color='#FFFFFF'/><stop offset='1' stop-color='#EEF2FF'/></linearGradient><linearGradient id='b' x1='0' y1='0' x2='0' y2='1'><stop offset='0' stop-color='#818CF8'/><stop offset='1' stop-color='#4F46E5'/></linearGradient><linearGradient id='l' x1='0' y1='0' x2='1' y2='0'><stop offset='0' stop-color='#34D399'/><stop offset='1' stop-color='#22D3EE'/></linearGradient><linearGradient id='c' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='#FDE68A'/><stop offset='1' stop-color='#F59E0B'/></linearGradient></defs><rect x='34' y='26' width='236' height='160' rx='18' fill='url(#p)'/><rect x='54' y='46' width='84' height='9' rx='4.5' fill='#C7D2FE'/><rect x='54' y='62' width='52' height='7' rx='3.5' fill='#E0E7FF'/><rect x='60' y='132' width='18' height='36' rx='5' fill='url(#b)' opacity='.45'/><rect x='90' y='118' width='18' height='50' rx='5' fill='url(#b)' opacity='.6'/><rect x='120' y='124' width='18' height='44' rx='5' fill='url(#b)' opacity='.5'/><rect x='150' y='100' width='18' height='68' rx='5' fill='url(#b)' opacity='.75'/><rect x='180' y='92' width='18' height='76' rx='5' fill='url(#b)' opacity='.85'/><rect x='210' y='72' width='18' height='96' rx='5' fill='url(#b)'/><polyline points='69,118 99,104 129,110 159,86 189,78 219,56' fill='none' stroke='url(#l)' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/><circle cx='219' cy='56' r='7' fill='#FFFFFF' stroke='#22D3EE' stroke-width='3'/><rect x='222' y='112' width='100' height='70' rx='14' fill='#FFFFFF'/><circle cx='252' cy='147' r='17' fill='none' stroke='#E0E7FF' stroke-width='7'/><circle cx='252' cy='147' r='17' fill='none' stroke='#4F46E5' stroke-width='7' stroke-dasharray='70 107' stroke-linecap='round' transform='rotate(-90 252 147)'/><rect x='278' y='136' width='32' height='7' rx='3.5' fill='#C7D2FE'/><rect x='278' y='150' width='22' height='7' rx='3.5' fill='#E0E7FF'/><circle cx='40' cy='170' r='24' fill='url(#c)'/><text x='40' y='179' font-family='Arial, sans-serif' font-size='24' font-weight='700' fill='#FFFFFF' text-anchor='middle'>$</text></svg>")
+IMG_REPORTE = _svg_uri("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 150'><defs><linearGradient id='u' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='#6366F1'/><stop offset='1' stop-color='#0EA5E9'/></linearGradient></defs><ellipse cx='100' cy='136' rx='70' ry='8' fill='#E2E8F0'/><rect x='56' y='14' width='86' height='112' rx='12' fill='#FFFFFF' stroke='#C7D2FE' stroke-width='2'/><rect x='70' y='34' width='42' height='7' rx='3.5' fill='#C7D2FE'/><rect x='70' y='48' width='58' height='6' rx='3' fill='#E0E7FF'/><rect x='70' y='60' width='50' height='6' rx='3' fill='#E0E7FF'/><rect x='70' y='72' width='56' height='6' rx='3' fill='#E0E7FF'/><rect x='70' y='90' width='30' height='16' rx='4' fill='#EF4444'/><text x='85' y='101.5' font-family='Arial, sans-serif' font-size='9' font-weight='700' fill='#FFFFFF' text-anchor='middle'>PDF</text><circle cx='146' cy='104' r='22' fill='url(#u)'/><path d='M146 115v-20m-8 8l8-8 8 8' fill='none' stroke='#FFFFFF' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'/></svg>")
+IMG_DIRECTORIO = _svg_uri("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 150'><ellipse cx='100' cy='136' rx='70' ry='8' fill='#E2E8F0'/><rect x='50' y='18' width='100' height='108' rx='14' fill='#FFFFFF' stroke='#C7D2FE' stroke-width='2'/><circle cx='100' cy='54' r='17' fill='#EEF2FF'/><circle cx='100' cy='49' r='7' fill='#818CF8'/><path d='M87 66c3-8 23-8 26 0' fill='#818CF8'/><rect x='70' y='84' width='60' height='7' rx='3.5' fill='#C7D2FE'/><rect x='78' y='98' width='44' height='6' rx='3' fill='#E0E7FF'/><circle cx='150' cy='108' r='18' fill='#10B981'/><path d='M141 108l6 6 12-12' fill='none' stroke='#FFFFFF' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'/></svg>")
 
 
 # =====================================================================
-# 6. ESTILOS (CSS PREMIUM)
+# 6. ESTILOS CSS
 # =====================================================================
 CSS = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-
-:root {
-    --bg: #F5F7FB; --surface: #FFFFFF; --ink: #0B1220; --ink-2: #334155; --muted: #64748B; --soft: #94A3B8;
-    --line: #E6EAF1; --line-2: #EEF1F6;
-    --primary: #4F46E5; --primary-600: #4338CA; --primary-50: #EEF2FF;
-    --radius: 14px;
-    --shadow-sm: 0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06);
-    --shadow-md: 0 10px 28px rgba(16,24,40,.08), 0 2px 6px rgba(16,24,40,.04);
-}
-
-/* Base */
+:root { --bg: #F5F7FB; --surface: #FFFFFF; --ink: #0B1220; --ink-2: #334155; --muted: #64748B; --soft: #94A3B8; --line: #E6EAF1; --line-2: #EEF1F6; --primary: #4F46E5; --primary-600: #4338CA; --primary-50: #EEF2FF; --radius: 14px; --shadow-sm: 0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06); --shadow-md: 0 10px 28px rgba(16,24,40,.08), 0 2px 6px rgba(16,24,40,.04); }
 .stApp { background: var(--bg) !important; }
-.stApp, .stApp p, .stApp li, .stApp label, .stApp input, .stApp textarea, .stApp button, .stMarkdown {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
-}
+.stApp, .stApp p, .stApp li, .stApp label, .stApp input, .stApp textarea, .stApp button, .stMarkdown { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important; }
 #MainMenu, footer, [data-testid="stDecoration"], .stAppDeployButton { display: none !important; }
 [data-testid="stHeader"] { background: transparent !important; }
 .block-container { padding-top: 1.6rem !important; padding-bottom: 3rem !important; max-width: 1360px; }
 h1, h2, h3, h4 { color: var(--ink) !important; letter-spacing: -0.02em; }
 @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
-
-/* Sidebar */
 [data-testid="stSidebar"] { background: #FFFFFF !important; border-right: 1px solid var(--line); }
 .brand { display: flex; align-items: center; gap: 12px; padding: 4px 4px 16px 4px; border-bottom: 1px solid var(--line-2); margin-bottom: 12px; }
 .brand img { width: 44px; height: 44px; border-radius: 14px; box-shadow: 0 6px 16px rgba(79,70,229,.25); }
@@ -661,19 +460,8 @@ h1, h2, h3, h4 { color: var(--ink) !important; letter-spacing: -0.02em; }
 .avatar { width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, #4F46E5, #0EA5E9); color: #FFFFFF; font-weight: 700; display: flex; align-items: center; justify-content: center; font-size: .8rem; flex-shrink: 0; }
 .profile-name { font-weight: 700; color: var(--ink); font-size: .85rem; }
 .profile-role { color: var(--muted); font-size: .75rem; }
-
-/* Hero */
-.hero {
-    position: relative; overflow: hidden; display: flex; align-items: center; justify-content: space-between; gap: 24px;
-    padding: 30px 34px; border-radius: 20px; margin-bottom: 18px;
-    background: radial-gradient(900px 260px at 85% -30%, rgba(129,140,248,.55), transparent 60%),
-                linear-gradient(135deg, #0B1B3F 0%, #172554 45%, #3730A3 100%);
-    box-shadow: 0 18px 40px rgba(30,27,75,.22); animation: fadeUp .5s ease both;
-}
-.hero::after {
-    content: ""; position: absolute; inset: 0; pointer-events: none;
-    background-image: radial-gradient(rgba(255,255,255,.07) 1px, transparent 1px); background-size: 18px 18px;
-}
+.hero { position: relative; overflow: hidden; display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 30px 34px; border-radius: 20px; margin-bottom: 18px; background: radial-gradient(900px 260px at 85% -30%, rgba(129,140,248,.55), transparent 60%), linear-gradient(135deg, #0B1B3F 0%, #172554 45%, #3730A3 100%); box-shadow: 0 18px 40px rgba(30,27,75,.22); animation: fadeUp .5s ease both; }
+.hero::after { content: ""; position: absolute; inset: 0; pointer-events: none; background-image: radial-gradient(rgba(255,255,255,.07) 1px, transparent 1px); background-size: 18px 18px; }
 .hero-body { position: relative; z-index: 1; }
 .hero-kicker { font-size: .78rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: #C7D2FE !important; }
 .hero-title { font-size: 2.05rem; font-weight: 800; letter-spacing: -0.03em; margin-top: 6px; color: #FFFFFF !important; line-height: 1.15; }
@@ -681,60 +469,32 @@ h1, h2, h3, h4 { color: var(--ink) !important; letter-spacing: -0.02em; }
 .hero-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
 .hero-chip { background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.2); color: #FFFFFF !important; padding: 6px 12px; border-radius: 999px; font-size: .8rem; font-weight: 600; }
 .hero-img { width: 300px; max-width: 36%; flex-shrink: 0; position: relative; z-index: 1; filter: drop-shadow(0 14px 26px rgba(0,0,0,.28)); }
-@media (max-width: 900px) { .hero { flex-direction: column; align-items: flex-start; } .hero-img { display: none; } .hero-title { font-size: 1.6rem; } }
-
-/* Encabezado de página */
 .page-head { display: flex; align-items: center; gap: 14px; margin: 2px 0 18px 0; animation: fadeUp .4s ease both; }
 .page-ico { width: 48px; height: 48px; border-radius: 14px; background: linear-gradient(135deg, #EEF2FF, #E0E7FF); border: 1px solid #E0E7FF; display: flex; align-items: center; justify-content: center; font-size: 1.4rem; flex-shrink: 0; }
 .page-kicker { font-size: .72rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--primary); }
 .page-title { font-size: 1.65rem; font-weight: 800; color: var(--ink); letter-spacing: -0.025em; line-height: 1.2; }
 .page-sub { font-size: .92rem; color: var(--muted); margin-top: 2px; }
-
-/* Tarjetas (contenedores con key="card_*") */
-[class*="st-key-card_"] {
-    background: var(--surface) !important; border: 1px solid var(--line) !important; border-radius: var(--radius) !important;
-    padding: 20px 22px !important; box-shadow: var(--shadow-sm) !important; transition: box-shadow .2s ease, border-color .2s ease;
-    animation: fadeUp .45s ease both;
-}
+[class*="st-key-card_"], [class*="st-key-nuevo_"] { background: var(--surface) !important; border: 1px solid var(--line) !important; border-radius: var(--radius) !important; padding: 20px 22px !important; box-shadow: var(--shadow-sm) !important; transition: box-shadow .2s ease, border-color .2s ease; animation: fadeUp .45s ease both; }
 [class*="st-key-card_"]:hover { box-shadow: var(--shadow-md) !important; border-color: #DCE1EA !important; }
 .sec-title { font-size: 1.02rem; font-weight: 700; color: var(--ink); }
 .sec-sub { font-size: .83rem; color: var(--muted); margin: 2px 0 6px 0; }
-
-/* KPIs */
 .kpi { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; box-shadow: var(--shadow-sm); transition: transform .2s ease, box-shadow .2s ease; height: 100%; animation: fadeUp .45s ease both; }
 .kpi:hover { transform: translateY(-3px); box-shadow: var(--shadow-md); }
 .kpi-top { display: flex; align-items: center; gap: 10px; }
 .kpi-ico { width: 38px; height: 38px; border-radius: 11px; display: flex; align-items: center; justify-content: center; font-size: 1.05rem; flex-shrink: 0; }
-.kpi-ico.indigo { background: #EEF2FF; } .kpi-ico.sky { background: #E0F2FE; } .kpi-ico.green { background: #ECFDF5; }
-.kpi-ico.amber { background: #FFFBEB; } .kpi-ico.red { background: #FEF2F2; } .kpi-ico.violet { background: #F5F3FF; }
+.kpi-ico.indigo { background: #EEF2FF; } .kpi-ico.sky { background: #E0F2FE; } .kpi-ico.green { background: #ECFDF5; } .kpi-ico.amber { background: #FFFBEB; } .kpi-ico.red { background: #FEF2F2; } .kpi-ico.violet { background: #F5F3FF; }
 .kpi-label { font-size: .74rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
 .kpi-value { font-size: 1.7rem; font-weight: 800; color: var(--ink); letter-spacing: -0.03em; margin-top: 12px; font-variant-numeric: tabular-nums; }
 .kpi-value.pos { color: #047857; } .kpi-value.neg { color: #B91C1C; }
 .kpi-note { font-size: .8rem; color: var(--muted); margin-top: 4px; }
 .bar { height: 6px; border-radius: 999px; background: #F1F5F9; overflow: hidden; margin-top: 8px; }
 .bar span { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, #F59E0B, #FBBF24); }
-
-/* Chips */
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 8px 0; }
 .chip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 999px; font-size: .78rem; font-weight: 600; background: #F1F5F9; color: #334155; border: 1px solid #E2E8F0; white-space: nowrap; }
-.chip.indigo { background: #EEF2FF; color: #4338CA; border-color: #E0E7FF; }
-.chip.green { background: #ECFDF5; color: #047857; border-color: #A7F3D0; }
-.chip.amber { background: #FFFBEB; color: #B45309; border-color: #FDE68A; }
-.chip.red { background: #FEF2F2; color: #B91C1C; border-color: #FECACA; }
-.chip.sky { background: #F0F9FF; color: #0369A1; border-color: #BAE6FD; }
-.chip.violet { background: #F5F3FF; color: #6D28D9; border-color: #DDD6FE; }
-
-/* Acciones destructivas (contenedores con key="peligro_*") */
-[class*="st-key-peligro"] .stButton button {
-    background: linear-gradient(135deg, #DC2626 0%, #EF4444 100%) !important; color: #FFFFFF !important;
-    border: none !important; box-shadow: 0 6px 16px rgba(220,38,38,.25) !important;
-}
-[class*="st-key-peligro"] .stButton button:hover {
-    color: #FFFFFF !important; filter: brightness(1.06); box-shadow: 0 10px 24px rgba(220,38,38,.34) !important;
-}
+.chip.indigo { background: #EEF2FF; color: #4338CA; border-color: #E0E7FF; } .chip.green { background: #ECFDF5; color: #047857; border-color: #A7F3D0; } .chip.amber { background: #FFFBEB; color: #B45309; border-color: #FDE68A; } .chip.red { background: #FEF2F2; color: #B91C1C; border-color: #FECACA; } .chip.sky { background: #F0F9FF; color: #0369A1; border-color: #BAE6FD; } .chip.violet { background: #F5F3FF; color: #6D28D9; border-color: #DDD6FE; }
+[class*="st-key-peligro"] .stButton button { background: linear-gradient(135deg, #DC2626 0%, #EF4444 100%) !important; color: #FFFFFF !important; border: none !important; box-shadow: 0 6px 16px rgba(220,38,38,.25) !important; }
+[class*="st-key-peligro"] .stButton button:hover { filter: brightness(1.06); box-shadow: 0 10px 24px rgba(220,38,38,.34) !important; }
 .confirmar-borrado { background: #FEF2F2; border: 1px solid #FECACA; color: #991B1B; border-radius: 12px; padding: 12px 14px; font-size: .9rem; margin: 6px 0 8px 0; }
-
-/* Estado vacío */
 .empty { display: flex; align-items: center; gap: 30px; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 28px 34px; box-shadow: var(--shadow-sm); animation: fadeUp .45s ease both; }
 .empty img { width: 210px; flex-shrink: 0; }
 .empty-title { font-size: 1.25rem; font-weight: 800; color: var(--ink); letter-spacing: -0.02em; }
@@ -742,46 +502,20 @@ h1, h2, h3, h4 { color: var(--ink) !important; letter-spacing: -0.02em; }
 .steps { margin-top: 14px; display: grid; gap: 9px; }
 .step { display: flex; gap: 10px; align-items: center; font-size: .9rem; color: var(--ink-2); }
 .step b { width: 24px; height: 24px; border-radius: 50%; background: var(--primary-50); color: var(--primary-600); display: flex; align-items: center; justify-content: center; font-size: .75rem; flex-shrink: 0; }
-@media (max-width: 700px) { .empty { flex-direction: column; text-align: center; } .step { justify-content: center; } }
-
-/* Neto por colaborador */
 .neto { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: linear-gradient(135deg, #F8FAFF, #EEF2FF); border: 1px solid #E0E7FF; border-radius: 12px; padding: 12px 16px; margin-top: 8px; }
 .neto-label { font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--primary-600); }
 .neto-formula { font-size: .8rem; color: var(--muted); font-variant-numeric: tabular-nums; margin-top: 2px; }
 .neto-valor { font-size: 1.4rem; font-weight: 800; color: var(--primary-600); font-variant-numeric: tabular-nums; white-space: nowrap; }
-
-/* Botones */
-.stButton button, .stDownloadButton button {
-    border-radius: 10px !important; font-weight: 600 !important; padding: .55rem 1.1rem !important;
-    border: 1px solid var(--line) !important; background: #FFFFFF !important; color: var(--ink) !important;
-    box-shadow: var(--shadow-sm) !important; transition: all .18s ease !important;
-}
-.stButton button:hover, .stDownloadButton button:hover {
-    border-color: #C7D2FE !important; color: var(--primary-600) !important; background: #F8FAFF !important;
-    transform: translateY(-1px); box-shadow: var(--shadow-md) !important;
-}
-.stButton button:active, .stDownloadButton button:active { transform: scale(.98); }
-.stButton button p, .stDownloadButton button p { color: inherit !important; font-weight: 600 !important; }
-.stButton button[kind="primary"], .stDownloadButton button[kind="primary"],
-[data-testid="stBaseButton-primary"], [data-testid="baseButton-primary"] {
-    background: linear-gradient(135deg, #4F46E5 0%, #6366F1 55%, #0EA5E9 140%) !important;
-    color: #FFFFFF !important; border: none !important; box-shadow: 0 6px 16px rgba(79,70,229,.28) !important;
-}
-.stButton button[kind="primary"]:hover, .stDownloadButton button[kind="primary"]:hover,
-[data-testid="stBaseButton-primary"]:hover, [data-testid="baseButton-primary"]:hover {
-    color: #FFFFFF !important; filter: brightness(1.07); box-shadow: 0 10px 24px rgba(79,70,229,.36) !important;
-}
-.stButton button:disabled, .stDownloadButton button:disabled { opacity: .45 !important; transform: none !important; box-shadow: none !important; }
-
-/* Inputs */
+.stButton button, .stDownloadButton button { border-radius: 10px !important; font-weight: 600 !important; padding: .55rem 1.1rem !important; border: 1px solid var(--line) !important; background: #FFFFFF !important; color: var(--ink) !important; box-shadow: var(--shadow-sm) !important; transition: all .18s ease !important; }
+.stButton button:hover, .stDownloadButton button:hover { border-color: #C7D2FE !important; color: var(--primary-600) !important; background: #F8FAFF !important; transform: translateY(-1px); box-shadow: var(--shadow-md) !important; }
+.stButton button[kind="primary"], .stDownloadButton button[kind="primary"] { background: linear-gradient(135deg, #4F46E5 0%, #6366F1 55%, #0EA5E9 140%) !important; color: #FFFFFF !important; border: none !important; box-shadow: 0 6px 16px rgba(79,70,229,.28) !important; }
+.stButton button[kind="primary"]:hover, .stDownloadButton button[kind="primary"]:hover { filter: brightness(1.07); box-shadow: 0 10px 24px rgba(79,70,229,.36) !important; color: #FFFFFF !important;}
 [data-baseweb="input"], [data-baseweb="select"] > div, [data-baseweb="textarea"] { border-radius: 10px !important; border-color: var(--line) !important; background: #FFFFFF !important; }
 [data-baseweb="input"]:focus-within, [data-baseweb="textarea"]:focus-within { border-color: var(--primary) !important; box-shadow: 0 0 0 3px rgba(79,70,229,.15) !important; }
 .stApp label p { color: var(--ink-2) !important; font-weight: 500 !important; font-size: .86rem !important; }
-[data-testid="stFileUploaderDropzone"] { background: linear-gradient(180deg, #FAFBFF, #F4F6FF) !important; border: 1.5px dashed #C7D2FE !important; border-radius: 12px !important; transition: border-color .2s ease; }
+[data-testid="stFileUploaderDropzone"] { background: linear-gradient(180deg, #FAFBFF, #F4F6FF) !important; border: 1.5px dashed #C7D2FE !important; border-radius: 12px !important; }
 [data-testid="stFileUploaderDropzone"]:hover { border-color: var(--primary) !important; }
-
-/* Expanders, tablas, tabs, toasts */
-[data-testid="stExpander"] { background: var(--surface) !important; border: 1px solid var(--line) !important; border-radius: var(--radius) !important; box-shadow: var(--shadow-sm) !important; transition: box-shadow .2s ease; }
+[data-testid="stExpander"] { background: var(--surface) !important; border: 1px solid var(--line) !important; border-radius: var(--radius) !important; box-shadow: var(--shadow-sm) !important; }
 [data-testid="stExpander"]:hover { box-shadow: var(--shadow-md) !important; }
 [data-testid="stExpander"] details { border: none !important; }
 [data-testid="stExpander"] summary p { font-weight: 600 !important; color: var(--ink) !important; }
@@ -790,9 +524,6 @@ h1, h2, h3, h4 { color: var(--ink) !important; letter-spacing: -0.02em; }
 [data-baseweb="tab"] { padding: 8px 14px !important; font-weight: 600 !important; }
 [data-baseweb="tab"][aria-selected="true"] p { color: var(--primary) !important; }
 [data-baseweb="tab-highlight"] { background-color: var(--primary) !important; height: 3px !important; border-radius: 3px; }
-[data-testid="stToast"] { border-radius: 12px !important; border: 1px solid var(--line) !important; box-shadow: 0 14px 34px rgba(16,24,40,.14) !important; background: #FFFFFF !important; }
-
-/* Perfil de proveedor (CRM) */
 .crm-head { display: flex; gap: 18px; align-items: center; }
 .crm-avatar { width: 68px; height: 68px; border-radius: 18px; flex-shrink: 0; background: linear-gradient(135deg, #4F46E5 0%, #6366F1 55%, #0EA5E9 100%); color: #FFFFFF; font-weight: 800; font-size: 1.45rem; display: flex; align-items: center; justify-content: center; box-shadow: 0 8px 20px rgba(79,70,229,.28); }
 .crm-kicker { font-size: .7rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--soft); }
@@ -807,8 +538,6 @@ h1, h2, h3, h4 { color: var(--ink) !important; letter-spacing: -0.02em; }
 .crm-value { font-size: .92rem; color: var(--ink); font-weight: 600; word-break: break-word; margin-top: 1px; }
 .crm-value.mono { font-variant-numeric: tabular-nums; letter-spacing: .02em; }
 .crm-value.empty { color: #CBD5E1; font-weight: 500; font-style: italic; }
-.crm-value a { color: var(--primary); text-decoration: none; }
-.crm-value a:hover { text-decoration: underline; }
 .crm-date { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px dashed #EEF2F7; }
 .crm-date:last-child { border-bottom: none; }
 .crm-date .l { display: flex; align-items: center; gap: 10px; font-size: .86rem; color: var(--ink-2); font-weight: 500; }
@@ -816,71 +545,47 @@ h1, h2, h3, h4 { color: var(--ink) !important; letter-spacing: -0.02em; }
 .crm-date .r.empty { color: #CBD5E1; font-weight: 500; font-style: italic; }
 .crm-text { color: var(--ink-2); font-size: .92rem; line-height: 1.6; white-space: pre-wrap; }
 .crm-text.empty { color: #CBD5E1; font-style: italic; }
-
-/* Lista de consejos */
 .tips { display: grid; gap: 10px; margin-top: 6px; }
 .tip { display: flex; gap: 10px; font-size: .86rem; color: var(--ink-2); line-height: 1.45; }
 .tip span { flex-shrink: 0; }
 </style>
 """
 
-
 # =====================================================================
 # 7. COMPONENTES DE INTERFAZ
 # =====================================================================
 def md(contenido, destino=None):
-    # '$' se escapa para que Streamlit no lo interprete como fórmula matemática.
     (destino or st).markdown(contenido.replace("$", "&#36;"), unsafe_allow_html=True)
 
-
 def tarjeta(nombre):
-    try:
-        return st.container(key=f"card_{nombre}")
-    except TypeError:  # Streamlit antiguo sin 'key' en contenedores
-        return st.container(border=True)
-
+    try: return st.container(key=f"card_{nombre}")
+    except TypeError: return st.container(border=True)
 
 def zona(clave):
-    """Contenedor sin estilo propio, solo para aplicar CSS por key (p. ej. botones rojos 'peligro_*')."""
-    try:
-        return st.container(key=clave)
-    except TypeError:
-        return st.container()
-
+    try: return st.container(key=clave)
+    except TypeError: return st.container()
 
 def encabezado_pagina(icono, titulo, subtitulo="", kicker="Gio Group · Gerencia"):
-    md(f"<div class='page-head'><div class='page-ico'>{icono}</div><div><div class='page-kicker'>{kicker}</div>"
-       f"<div class='page-title'>{titulo}</div><div class='page-sub'>{subtitulo}</div></div></div>")
-
+    md(f"<div class='page-head'><div class='page-ico'>{icono}</div><div><div class='page-kicker'>{kicker}</div><div class='page-title'>{titulo}</div><div class='page-sub'>{subtitulo}</div></div></div>")
 
 def titulo_seccion(titulo, sub=""):
     sub_html = f"<div class='sec-sub'>{sub}</div>" if sub else ""
     return f"<div class='sec-title'>{titulo}</div>{sub_html}"
 
-
 def chip(texto, tono=""):
     return f"<span class='chip {tono}'>{texto}</span>"
 
-
 def kpi_html(icono, etiqueta, valor, nota="", tono="indigo", valor_cls=""):
-    return (f"<div class='kpi'><div class='kpi-top'><span class='kpi-ico {tono}'>{icono}</span>"
-            f"<span class='kpi-label'>{etiqueta}</span></div>"
-            f"<div class='kpi-value {valor_cls}'>{valor}</div><div class='kpi-note'>{nota}</div></div>")
-
+    return (f"<div class='kpi'><div class='kpi-top'><span class='kpi-ico {tono}'>{icono}</span><span class='kpi-label'>{etiqueta}</span></div><div class='kpi-value {valor_cls}'>{valor}</div><div class='kpi-note'>{nota}</div></div>")
 
 def fila_kpis(items):
     cols = st.columns(len(items))
-    for col, item in zip(cols, items):
-        md(item, col)
-
+    for col, item in zip(cols, items): md(item, col)
 
 def estado_vacio(imagen, titulo, texto, pasos=()):
     pasos_html = ""
-    if pasos:
-        pasos_html = "<div class='steps'>" + "".join(f"<div class='step'><b>{i}</b>{p}</div>" for i, p in enumerate(pasos, 1)) + "</div>"
-    md(f"<div class='empty'><img src='{imagen}' alt=''/><div><div class='empty-title'>{titulo}</div>"
-       f"<div class='empty-text'>{texto}</div>{pasos_html}</div></div>")
-
+    if pasos: pasos_html = "<div class='steps'>" + "".join(f"<div class='step'><b>{i}</b>{p}</div>" for i, p in enumerate(pasos, 1)) + "</div>"
+    md(f"<div class='empty'><img src='{imagen}' alt=''/><div><div class='empty-title'>{titulo}</div><div class='empty-text'>{texto}</div>{pasos_html}</div></div>")
 
 def espacio(px_alto=10):
     md(f"<div style='height:{px_alto}px'></div>")
@@ -892,68 +597,50 @@ def espacio(px_alto=10):
 def _fila_norm(fila):
     return [_normalizar(c) for c in fila]
 
-
 def _es_encabezado(fila_norm):
     tiene_prof = any(any(k in c for k in CLAVES_PROFESIONAL) for c in fila_norm)
     tiene_precio = any(any(k in c for k in CLAVES_PRECIO) for c in fila_norm)
     return tiene_prof and tiene_precio
 
-
 def _ubicar_encabezado(tablas):
-    """(tabla, fila) del encabezado. Primero exige profesional + precio; luego la regla original (solo 'PROFESIONAL')."""
     for ti, tabla in enumerate(tablas):
         for fi, fila in enumerate(tabla):
-            if _es_encabezado(_fila_norm(fila)):
-                return ti, fi
+            if _es_encabezado(_fila_norm(fila)): return ti, fi
     for ti, tabla in enumerate(tablas):
         for fi, fila in enumerate(tabla):
-            if any("PROFESIONAL" in c for c in _fila_norm(fila)):
-                return ti, fi
+            if any("PROFESIONAL" in c for c in _fila_norm(fila)): return ti, fi
     return None
-
 
 def _buscar_columna(columnas, claves, excluir=()):
     for clave in claves:
         for c in columnas:
-            if clave in c and c not in excluir:
-                return c
+            if clave in c and c not in excluir: return c
     return None
 
-
 def _tablas_pagina(page, ajustes=None):
-    try:
-        tablas = page.extract_tables(ajustes) if ajustes else page.extract_tables()
-    except Exception:
-        return []
+    try: tablas = page.extract_tables(ajustes) if ajustes else page.extract_tables()
+    except Exception: return []
     salida = []
     for t in tablas or []:
         filas = [["" if c is None else str(c) for c in fila] for fila in (t or []) if fila and any(c not in (None, "") for c in fila)]
-        if filas:
-            salida.append(filas)
+        if filas: salida.append(filas)
     return salida
 
-
 def _filas_con_precio(tablas):
-    """Calidad de una extracción: filas bajo el encabezado con un precio legible."""
     pos = _ubicar_encabezado(tablas)
-    if pos is None:
-        return 0
+    if pos is None: return 0
     ti, fi = pos
     enc = _fila_norm(tablas[ti][fi])
     idx_precio = next((i for k in CLAVES_PRECIO for i, c in enumerate(enc) if k in c), None)
-    if idx_precio is None:
-        return 0
+    if idx_precio is None: return 0
     total = 0
     for j, tabla in enumerate(tablas[ti:]):
         for fila in (tabla[fi + 1:] if j == 0 else tabla):
-            if idx_precio < len(fila) and _a_numero(fila[idx_precio]) is not None:
-                total += 1
+            if idx_precio < len(fila) and _a_numero(fila[idx_precio]) is not None: total += 1
     return total
-
 
 @st.cache_data(show_spinner=False, max_entries=16)
 def extraer_contenido_pdf(pdf_bytes):
-    """Lectura pesada (una sola vez por archivo). Prueba tablas con bordes y, como respaldo, tablas alineadas por texto."""
     textos, tablas_lineas, tablas_texto = [], [], []
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         n_paginas = len(pdf.pages)
@@ -967,38 +654,31 @@ def extraer_contenido_pdf(pdf_bytes):
         return "\n".join(textos), tablas_texto, n_paginas, "texto"
     return "\n".join(textos), tablas_lineas, n_paginas, "lineas"
 
-
 def detectar_periodo(texto):
-    """Rango de fechas del reporte: primero un rango explícito ('Del ... al ...'); si no, el mínimo y máximo de las fechas del documento."""
     t = _normalizar(texto)
     rango = re.search(r"(?:DESDE|DEL|DE|PERIODO|RANGO|FECHAS?)\s*:?\s*" + PATRON_FECHA + r"\s*(?:HASTA|AL|A|-)\s*:?\s*" + PATRON_FECHA, t)
     if rango:
         f1, f2 = _parse_fecha_texto(rango.group(1)), _parse_fecha_texto(rango.group(2))
-        if f1 and f2:
-            return min(f1, f2), max(f1, f2), "rango indicado en el reporte"
+        if f1 and f2: return min(f1, f2), max(f1, f2), "rango indicado en el reporte"
     fechas = []
     for m in re.finditer(PATRON_FECHA, t):
         contexto = t[max(0, m.start() - 30):m.start()]
-        if re.search(r"GENERAD|IMPRES|EMISION|EMITID|CREAD", contexto):
-            continue  # fecha de impresión del reporte, no del período
+        if re.search(r"GENERAD|IMPRES|EMISION|EMITID|CREAD", contexto): continue
         f = _parse_fecha_texto(m.group(1))
-        if f:
-            fechas.append(f)
-    if len(fechas) >= 2:
-        return min(fechas), max(fechas), f"{len(fechas)} fechas encontradas en el reporte"
+        if f: fechas.append(f)
+    if len(fechas) >= 2: return min(fechas), max(fechas), f"{len(fechas)} fechas encontradas en el reporte"
     return None
-
 
 def construir_reporte(texto, tablas, estrategia, mapeo):
     meta = {"estrategia": "Tablas con bordes" if estrategia == "lineas" else "Alineación de texto",
             "columnas": [], "filas_leidas": 0, "servicios": 0, "excluidas_total": 0, "sin_precio": 0,
             "sin_profesional": 0, "monto_sin_profesional": 0.0, "rellenadas": 0, "muestra_texto": texto[:1500]}
     if not texto.strip() and not tablas:
-        return {"ok": False, "meta": meta, "error": "El PDF no tiene texto legible (parece escaneado como imagen). Exporta el reporte desde el sistema de ventas como PDF normal."}
+        return {"ok": False, "meta": meta, "error": "El PDF no tiene texto legible (parece escaneado como imagen)."}
 
     pos = _ubicar_encabezado(tablas)
     if pos is None:
-        return {"ok": False, "meta": meta, "error": "No se encontró la tabla de servicios: falta un encabezado con la columna PROFESIONAL (o COLABORADOR / EMPLEADO) y PRECIO (o TOTAL / MONTO)."}
+        return {"ok": False, "meta": meta, "error": "No se encontró la tabla de servicios: falta un encabezado con la columna PROFESIONAL y PRECIO."}
     ti, fi = pos
 
     columnas = []
@@ -1014,27 +694,21 @@ def construir_reporte(texto, tablas, estrategia, mapeo):
 
     filas = []
     for j, tabla in enumerate(tablas[ti:]):
-        if j == 0:
-            cuerpo = tabla[fi + 1:]
-        elif estrategia == "lineas" and tabla and len(tabla[0]) != ancho_tabla:
-            continue  # tablas de resumen u otras secciones: no son servicios
-        else:
-            cuerpo = tabla
+        if j == 0: cuerpo = tabla[fi + 1:]
+        elif estrategia == "lineas" and tabla and len(tabla[0]) != ancho_tabla: continue
+        else: cuerpo = tabla
         for fila in cuerpo:
             fila = list(fila)[:ancho_tabla] + [""] * max(0, ancho_tabla - len(fila))
-            if _es_encabezado(_fila_norm(fila)):
-                continue  # encabezado repetido en cada página
+            if _es_encabezado(_fila_norm(fila)): continue
             filas.append(fila)
     meta["filas_leidas"] = len(filas)
-    if not filas:
-        return {"ok": False, "meta": meta, "error": "Se encontró el encabezado, pero ninguna fila de servicios debajo."}
+    if not filas: return {"ok": False, "meta": meta, "error": "Se encontró el encabezado, pero ninguna fila de servicios debajo."}
 
     df = pd.DataFrame(filas, columns=columnas)
 
     def elegir(clave, claves, excluir=()):
         v = mapeo.get(clave)
-        if v and v in columnas:
-            return v
+        if v and v in columnas: return v
         return _buscar_columna(columnas, claves, excluir)
 
     c_prof = elegir("prof", CLAVES_PROFESIONAL)
@@ -1044,26 +718,23 @@ def construir_reporte(texto, tablas, estrategia, mapeo):
     c_fecha = elegir("fecha", CLAVES_FECHA, (c_prof, c_pre))
     meta.update({"c_prof": c_prof, "c_pre": c_pre, "c_cli": c_cli, "c_ser": c_ser, "c_fecha": c_fecha})
     if not c_prof or not c_pre:
-        return {"ok": False, "meta": meta, "error": "No se pudo identificar la columna del profesional o la del precio. Selecciónalas manualmente en el diagnóstico."}
+        return {"ok": False, "meta": meta, "error": "No se pudo identificar la columna del profesional o la del precio."}
 
     df["_PROF"] = df[c_prof].map(_texto)
     df["_PRECIO"] = df[c_pre].map(_a_numero)
     prof_norm = df["_PROF"].map(_normalizar)
     encabezado_repetido = prof_norm.str.contains("PROFESIONAL", na=False) | (prof_norm == c_prof)
 
-    # Filas de TOTAL / SUBTOTAL: se excluyen para no duplicar los ingresos
     es_total = pd.Series(False, index=df.index)
     for c in [c for c in dict.fromkeys([c_prof, c_cli, columnas[0]]) if c]:
         es_total = es_total | df[c].map(lambda v: bool(PATRON_TOTAL.match(_normalizar(v))))
     meta["excluidas_total"] = int((es_total & ~encabezado_repetido).sum())
     df = df[~encabezado_repetido & ~es_total].copy()
 
-    # Reportes agrupados: el nombre del profesional solo aparece en la primera fila del grupo
     if mapeo.get("ffill", True):
         ultimo, nuevos, rellenadas = "", [], 0
         for prof, precio in zip(df["_PROF"], df["_PRECIO"]):
-            if prof:
-                ultimo = prof
+            if prof: ultimo = prof
             elif pd.notna(precio) and ultimo:
                 prof = ultimo
                 rellenadas += 1
@@ -1077,8 +748,7 @@ def construir_reporte(texto, tablas, estrategia, mapeo):
     meta["sin_profesional"] = int((sin_prof & ~sin_precio).sum())
     meta["monto_sin_profesional"] = float(df.loc[sin_prof & ~sin_precio, "_PRECIO"].sum())
     df = df[~sin_precio & ~sin_prof].copy()
-    if df.empty:
-        return {"ok": False, "meta": meta, "error": f"Ninguna fila tiene un precio legible en la columna «{c_pre}». Elige la columna correcta en el diagnóstico."}
+    if df.empty: return {"ok": False, "meta": meta, "error": f"Ninguna fila tiene un precio legible en la columna «{c_pre}»."}
 
     df[c_prof] = df["_PROF"]
     df[c_pre] = df["_PRECIO"].astype(float)
@@ -1087,9 +757,7 @@ def construir_reporte(texto, tablas, estrategia, mapeo):
     return {"ok": True, "df": df, "meta": meta, "c_prof": c_prof, "c_pre": c_pre, "c_cli": c_cli,
             "c_ser": c_ser, "c_fecha": c_fecha, "periodo": detectar_periodo(texto)}
 
-
 def aplicar_reporte(rep, quincenas_manual=None):
-    """Aplica el reporte a la planilla. Las fórmulas de pago son exactamente las originales."""
     ss = st.session_state
     df_reporte = rep["df"]
     c_prof, c_pre, c_cli, c_ser, c_fecha = rep["c_prof"], rep["c_pre"], rep["c_cli"], rep["c_ser"], rep["c_fecha"]
@@ -1121,7 +789,6 @@ def aplicar_reporte(rep, quincenas_manual=None):
 
     # --- Ingresos y marcas ---
     ss["total_ingresos_pdf"] = float(df_reporte[c_pre].sum())
-
     def asignar_marca(p):
         p = _normalizar(p)
         if "MAYDELY" in p or "JESSICA" in p: return "Papi Spa"
@@ -1134,7 +801,7 @@ def aplicar_reporte(rep, quincenas_manual=None):
     df_reporte['EXTRA'] = df_reporte.apply(lambda r: 0.0 if r['MARCA'] == "Dr. Gio Molina" else max(0.0, float(r[c_pre]) - 60.0), axis=1)
     ss["extras_por_marca"] = {k: float(v) for k, v in df_reporte.groupby('MARCA')['EXTRA'].sum().to_dict().items()}
 
-    # --- Cálculo por colaborador (lógica de negocio intacta) ---
+    # --- Cálculo por colaborador ---
     df_reporte["_COLAB"] = ""
     df_reporte["_N_COINC"] = 0
     lista_ex = []
@@ -1145,14 +812,15 @@ def aplicar_reporte(rep, quincenas_manual=None):
         ss[f"com_{emp}"] = 0.0
         ss[f"extra_bruto_{emp}"] = 0.0
         ss[f"ret_pub_{emp}"] = 0.0
-        ss[f"base_{emp}"] = 0.0 if "Porcentaje" in mod else calcular_bruto_acumulado(info, ss["quincenas_multiplicador"])
+        
+        # Asignar la base neta multiplicada por quincenas
+        ss[f"base_net_{emp}"] = 0.0 if "Porcentaje" in mod else (sueldo_neto_de(info) * ss["quincenas_multiplicador"])
 
         patron = patron_alias(alias_efectivo(emp, info))
         mascara = df_reporte["_PROF_N"].map(lambda n: coincide_alias(n, patron)).astype(bool)
         df_reporte.loc[mascara, "_N_COINC"] += 1
         df_reporte.loc[mascara & (df_reporte["_COLAB"] == ""), "_COLAB"] = emp
         df_p = df_reporte[mascara]
-        # Posiciones (en reporte_df) de los servicios de esta persona: exactamente las filas que suman a su pago
         indices_por_colab[emp] = [i for i, m in enumerate(mascara.tolist()) if m]
         tot_s = float(df_p[c_pre].sum())
         ss[f"serv_tot_{emp}"] = tot_s
@@ -1179,10 +847,7 @@ def aplicar_reporte(rep, quincenas_manual=None):
     ss["indices_por_colab"] = indices_por_colab
 
     sin_asignar = df_reporte[df_reporte["_COLAB"] == ""]
-    meta["sin_asignar"] = [
-        {"Profesional en el PDF": k, "Servicios": int(len(g)), "Ventas": float(g[c_pre].sum())}
-        for k, g in sin_asignar.groupby("_PROF")
-    ]
+    meta["sin_asignar"] = [{"Profesional en el PDF": k, "Servicios": int(len(g)), "Ventas": float(g[c_pre].sum())} for k, g in sin_asignar.groupby("_PROF")]
     meta["multiples"] = int((df_reporte["_N_COINC"] > 1).sum())
 
     vacio = pd.Series("", index=df_reporte.index)
@@ -1197,18 +862,14 @@ def aplicar_reporte(rep, quincenas_manual=None):
         "Fecha": (fechas_col if fechas_col is not None else pd.Series(pd.NaT, index=df_reporte.index)).values,
     })
 
-
 def mapeo_actual():
     ss = st.session_state
-
     def valor(clave):
         v = ss.get(clave)
         return None if v in (None, AUTO) else v
-
     return {"prof": valor("map_prof"), "precio": valor("map_precio"), "cliente": valor("map_cliente"),
             "servicio": valor("map_servicio"), "fecha": valor("map_fecha"), "quincenas": valor("map_quincenas"),
             "ffill": bool(ss.get("map_ffill", True))}
-
 
 def _reiniciar_datos_pdf():
     ss = st.session_state
@@ -1225,19 +886,16 @@ def _reiniciar_datos_pdf():
         ss[f"ret_pub_{emp}"] = 0.0
         ss[f"serv_tot_{emp}"] = 0.0
 
-
 def ejecutar_procesamiento():
     ss = st.session_state
     pdf_bytes = ss.get("pdf_bytes")
-    if not pdf_bytes:
-        return False, "No hay ningún reporte cargado."
+    if not pdf_bytes: return False, "No hay ningún reporte cargado."
     try:
         texto, tablas, n_paginas, estrategia = extraer_contenido_pdf(pdf_bytes)
         mapeo = mapeo_actual()
         rep = construir_reporte(texto, tablas, estrategia, mapeo)
         rep["meta"]["paginas"] = n_paginas
-        if rep["ok"]:
-            aplicar_reporte(rep, mapeo.get("quincenas"))
+        if rep["ok"]: aplicar_reporte(rep, mapeo.get("quincenas"))
     except Exception as e:
         rep = {"ok": False, "meta": {}, "error": f"Error inesperado leyendo el PDF: {e}"}
     if not rep["ok"]:
@@ -1249,11 +907,9 @@ def ejecutar_procesamiento():
     reiniciar_widgets_planilla()
     return True, f"Reporte leído: {rep['meta']['servicios']} servicios procesados."
 
-
 def reprocesar_pdf():
     ok, msg = ejecutar_procesamiento()
     notificar(msg, "🔄" if ok else "⚠️")
-
 
 def limpiar_reporte_pdf():
     ss = st.session_state
@@ -1263,162 +919,145 @@ def limpiar_reporte_pdf():
     recalcular_bases()
     ss["pdf_hash"], ss["pdf_nombre"], ss["pdf_bytes"] = None, "", None
     ss["pdf_ok"], ss["pdf_error"], ss["pdf_meta"] = False, "", {}
-    for k in CLAVES_MAPEO:
-        ss.pop(k, None)
-    ss["uploader_nonce"] += 1  # vacía el cargador de archivos
+    for k in CLAVES_MAPEO: ss.pop(k, None)
+    ss["uploader_nonce"] += 1
     reiniciar_widgets_planilla()
     notificar("Reporte limpiado. La planilla volvió a los valores base.", "🧹")
 
 
 # =====================================================================
-# 9. PLANILLA (fórmulas originales, una sola fuente de verdad)
+# 9. PLANILLA
 # =====================================================================
 def calcular_fila_planilla(emp, info):
     ss = st.session_state
-    base = float(ss.get(f"base_{emp}", 0.0) or 0.0)
+    
+    # Trabajamos directamente con la base Neta
+    neto_base = float(ss.get(f"base_net_{emp}", 0.0) or 0.0)
+    
+    # Calculamos la base Bruta matemáticamente para que al quitar renta dé exacto el neto
+    bruto_base = round(neto_base / 0.90, 2) if neto_base > 0 else 0.0
+    
     com = float(ss.get(f"com_{emp}", 0.0) or 0.0)
     bonos = float(ss.get(f"hex_{emp}", 0.0) or 0.0)
     desc = float(ss.get(f"desc_{emp}", 0.0) or 0.0)
-    renta_calculada = 0.0 if "Porcentaje" in info.get("mod", "") and info.get("rol", "") == "Operativo" else round(base * 0.10, 2)
-    t_net = round(base + com + bonos - renta_calculada - desc, 2)
+    
+    # La renta es 10% sobre el bruto
+    renta_calculada = 0.0 if "Porcentaje" in info.get("mod", "") and info.get("rol", "") == "Operativo" else round(bruto_base * 0.10, 2)
+    
+    t_net = round(bruto_base + com + bonos - renta_calculada - desc, 2)
     mod = info.get("mod", MOD_FIJO)
     return {
         "Colaborador": emp, "Rol": info.get("rol", ""),
         "Modalidad": "Estándar" if "Estándar" in mod else "Porcentaje" if "Porcentaje" in mod else "Fijo",
-        "Ventas PDF": float(ss.get(f"serv_tot_{emp}", 0.0) or 0.0), "Base": base,
-        "Extra": float(ss.get(f"extra_bruto_{emp}", 0.0) or 0.0), "Ret Pub": float(ss.get(f"ret_pub_{emp}", 0.0) or 0.0),
+        "Ventas PDF": float(ss.get(f"serv_tot_{emp}", 0.0) or 0.0), 
+        "Base Bruta": bruto_base,
+        "Base Neta": neto_base,
+        "Extra": float(ss.get(f"extra_bruto_{emp}", 0.0) or 0.0), 
+        "Ret Pub": float(ss.get(f"ret_pub_{emp}", 0.0) or 0.0),
         "Com Neta": com, "Bonos": bonos, "Desc": desc, "Renta": renta_calculada, "Total": t_net,
         "Notas": ss.get(f"notas_{emp}", "Ninguno"), "Email": _texto(ss.get(f"email_{emp}", "")),
         "DUI": info.get("dui", ""), "Cuenta": info.get("cuenta", ""),
     }
 
-
 def calcular_planilla():
     return [calcular_fila_planilla(emp, info) for emp, info in st.session_state["empleados"].items()]
 
-
 def servicios_colaborador(emp, info):
-    """Todos los servicios del PDF asignados a la persona, con el extra y la comisión de cada uno (mismas fórmulas del pago)."""
+    """Devuelve tabla detallada de cada servicio del PDF que generó comisiones y extras."""
     ss = st.session_state
     rep = ss.get("reporte_df")
     indices = ss.get("indices_por_colab", {}).get(emp)
-    if rep is None or not indices:
-        return None
+    if rep is None or not indices: return None
+    
     d = rep.iloc[indices]
     extra = (d["Precio"] - 60.0).clip(lower=0.0)
-    tabla = pd.DataFrame({
-        "Fecha": d["Fecha"].dt.strftime("%d/%m/%Y").fillna("—"),
-        "Cliente": d["Cliente"].replace("", "—"),
-        "Servicio": d["Servicio"].replace("", "—"),
-        "Precio": d["Precio"].astype(float),
-        "Extra generado": extra.astype(float),
-    }).reset_index(drop=True)
-    if info.get("rol", "") == "Operativo":
-        if "Estándar" in info.get("mod", ""):
-            tabla["Comisión"] = (extra - extra * 0.25).values  # extra menos 25% de retención publicitaria
-        else:
-            tabla["Comisión"] = (d["Precio"] * (float(info.get("porc", 20) or 0) / 100.0)).values
-    return tabla
+    
+    if info.get("rol", "") == "Operativo" and "Estándar" in info.get("mod", ""):
+        tabla = pd.DataFrame({
+            "Fecha": d["Fecha"].dt.strftime("%d/%m/%Y").fillna("—"),
+            "Cliente": d["Cliente"].replace("", "—"),
+            "Servicio": d["Servicio"].replace("", "—"),
+            "Precio Final": d["Precio"].astype(float),
+            "Base (Primeros $60)": d["Precio"].apply(lambda x: min(x, 60.0)).astype(float),
+            "Extra Bruto": extra.astype(float),
+            "Retención Pauta 25%": (extra * 0.25).astype(float),
+            "Comisión Neta": (extra * 0.75).astype(float)
+        })
+    else:
+        tabla = pd.DataFrame({
+            "Fecha": d["Fecha"].dt.strftime("%d/%m/%Y").fillna("—"),
+            "Cliente": d["Cliente"].replace("", "—"),
+            "Servicio": d["Servicio"].replace("", "—"),
+            "Precio Final": d["Precio"].astype(float),
+        })
+        if info.get("rol", "") == "Operativo" and "Porcentaje" in info.get("mod", ""):
+            tabla["Comisión Neta"] = (d["Precio"] * (float(info.get("porc", 20) or 0) / 100.0)).values
+            
+    return tabla.reset_index(drop=True)
 
 
 # =====================================================================
-# 10. GRÁFICOS (Plotly)
+# 10. GRÁFICOS
 # =====================================================================
 def estilo_plotly(fig, height=360):
-    fig.update_layout(
-        height=height, margin=dict(l=8, r=8, t=8, b=8),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Inter, -apple-system, Segoe UI, sans-serif", color="#334155", size=13),
-        hoverlabel=dict(bgcolor="#FFFFFF", bordercolor="#E2E8F0", font=dict(family="Inter, sans-serif", color="#0B1220", size=13)),
-        legend=dict(orientation="h", yanchor="top", y=-0.12, xanchor="center", x=0.5, title=None, font=dict(color="#334155")),
-    )
-    try:
-        fig.update_layout(barcornerradius=5)
-    except ValueError:
-        pass  # Plotly < 5.19
+    fig.update_layout(height=height, margin=dict(l=8, r=8, t=8, b=8), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(family="Inter, sans-serif", color="#334155", size=13), hoverlabel=dict(bgcolor="#FFFFFF", bordercolor="#E2E8F0", font=dict(family="Inter, sans-serif", color="#0B1220", size=13)), legend=dict(orientation="h", yanchor="top", y=-0.12, xanchor="center", x=0.5, title=None, font=dict(color="#334155")))
+    try: fig.update_layout(barcornerradius=5)
+    except ValueError: pass
     return fig
-
 
 def _ejes_dinero_h(fig):
     fig.update_xaxes(title=None, gridcolor="#EEF2F7", zeroline=False, tickprefix="$", tickformat=",.0f", tickfont=dict(color="#64748B"))
     fig.update_yaxes(title=None, showgrid=False, tickfont=dict(color="#0B1220"))
 
-
 def marcas_ordenadas(dic):
     return [m for m in ORDEN_MARCAS if m in dic] + [m for m in dic if m not in ORDEN_MARCAS]
-
 
 def grafico_donut_marcas(ingresos_marca):
     marcas = [m for m in marcas_ordenadas(ingresos_marca) if ingresos_marca.get(m, 0) > 0]
     valores = [float(ingresos_marca[m]) for m in marcas]
-    fig = go.Figure(go.Pie(
-        labels=marcas, values=valores, hole=0.66, sort=False, direction="clockwise",
-        marker=dict(colors=[COLORES_MARCA.get(m, "#94A3B8") for m in marcas], line=dict(color="#FFFFFF", width=2)),
-        textinfo="percent", textposition="outside", textfont=dict(color="#334155", size=12),
-        hovertemplate="<b>%{label}</b><br>$%{value:,.2f} · %{percent}<extra></extra>",
-    ))
+    fig = go.Figure(go.Pie(labels=marcas, values=valores, hole=0.66, sort=False, direction="clockwise", marker=dict(colors=[COLORES_MARCA.get(m, "#94A3B8") for m in marcas], line=dict(color="#FFFFFF", width=2)), textinfo="percent", textposition="outside", textfont=dict(color="#334155", size=12), hovertemplate="<b>%{label}</b><br>$%{value:,.2f} · %{percent}<extra></extra>"))
     fig.add_annotation(text=f"<span style='font-size:12px;color:#64748B'>TOTAL</span><br><b style='font-size:22px;color:#0B1220'>${sum(valores):,.0f}</b>", showarrow=False, x=0.5, y=0.5)
     return estilo_plotly(fig, 360)
 
-
 def grafico_barras_marcas(ingresos_marca, extras_marca):
     marcas = marcas_ordenadas(ingresos_marca)
-    filas = []
-    for m in marcas:
-        filas.append({"Marca": m, "Concepto": "Ingresos", "Monto": float(ingresos_marca.get(m, 0.0))})
-        filas.append({"Marca": m, "Concepto": "Extras (> $60)", "Monto": float(extras_marca.get(m, 0.0))})
-    fig = px.bar(pd.DataFrame(filas), y="Marca", x="Monto", color="Concepto", barmode="group", orientation="h",
-                 color_discrete_map={"Ingresos": "#2a78d6", "Extras (> $60)": "#eb6834"},
-                 category_orders={"Marca": marcas, "Concepto": ["Ingresos", "Extras (> $60)"]})
-    fig.update_traces(hovertemplate="<b>%{y}</b><br>%{fullData.name}: $%{x:,.2f}<extra></extra>", marker_line_width=0,
-                      texttemplate="$%{x:,.0f}", textposition="outside", textfont=dict(color="#334155", size=11), cliponaxis=False)
+    filas = [{"Marca": m, "Concepto": "Ingresos", "Monto": float(ingresos_marca.get(m, 0.0))} for m in marcas]
+    filas += [{"Marca": m, "Concepto": "Extras (> $60)", "Monto": float(extras_marca.get(m, 0.0))} for m in marcas]
+    fig = px.bar(pd.DataFrame(filas), y="Marca", x="Monto", color="Concepto", barmode="group", orientation="h", color_discrete_map={"Ingresos": "#2a78d6", "Extras (> $60)": "#eb6834"}, category_orders={"Marca": marcas, "Concepto": ["Ingresos", "Extras (> $60)"]})
+    fig.update_traces(hovertemplate="<b>%{y}</b><br>%{fullData.name}: $%{x:,.2f}<extra></extra>", marker_line_width=0, texttemplate="$%{x:,.0f}", textposition="outside", textfont=dict(color="#334155", size=11), cliponaxis=False)
     fig.update_layout(bargap=0.28, bargroupgap=0.08)
     _ejes_dinero_h(fig)
     fig.update_yaxes(autorange="reversed")
     return estilo_plotly(fig, max(300, 92 * len(marcas) + 80))
 
-
 def grafico_colaboradores(ventas):
     df = pd.DataFrame([{"Colaborador": k, "Ventas": float(v)} for k, v in ventas.items() if v > 0]).sort_values("Ventas")
     fig = px.bar(df, x="Ventas", y="Colaborador", orientation="h")
-    fig.update_traces(marker_color="#2a78d6", marker_line_width=0, texttemplate="$%{x:,.0f}", textposition="outside",
-                      textfont=dict(color="#334155"), cliponaxis=False,
-                      hovertemplate="<b>%{y}</b><br>Servicios: $%{x:,.2f}<extra></extra>")
+    fig.update_traces(marker_color="#2a78d6", marker_line_width=0, texttemplate="$%{x:,.0f}", textposition="outside", textfont=dict(color="#334155"), cliponaxis=False, hovertemplate="<b>%{y}</b><br>Servicios: $%{x:,.2f}<extra></extra>")
     fig.update_layout(bargap=0.38, showlegend=False)
     _ejes_dinero_h(fig)
     return estilo_plotly(fig, max(260, 50 * len(df) + 60))
 
-
 def grafico_top_servicios(df):
     d = df[df["Servicio"].str.strip() != ""]
-    top = (d.groupby("Servicio").agg(Ingresos=("Precio", "sum"), Cantidad=("Precio", "size"))
-           .sort_values("Ingresos", ascending=False).head(8).sort_values("Ingresos").reset_index())
+    top = (d.groupby("Servicio").agg(Ingresos=("Precio", "sum"), Cantidad=("Precio", "size")).sort_values("Ingresos", ascending=False).head(8).sort_values("Ingresos").reset_index())
     top["Etiqueta"] = top["Servicio"].map(lambda s: s if len(s) <= 30 else s[:29] + "…")
     fig = px.bar(top, x="Ingresos", y="Etiqueta", orientation="h", custom_data=["Servicio", "Cantidad"])
-    fig.update_traces(marker_color=COLOR_PRIMARIO, marker_line_width=0, texttemplate="$%{x:,.0f}", textposition="outside",
-                      textfont=dict(color="#334155"), cliponaxis=False,
-                      hovertemplate="<b>%{customdata[0]}</b><br>Ingresos: $%{x:,.2f}<br>Servicios: %{customdata[1]}<extra></extra>")
+    fig.update_traces(marker_color=COLOR_PRIMARIO, marker_line_width=0, texttemplate="$%{x:,.0f}", textposition="outside", textfont=dict(color="#334155"), cliponaxis=False, hovertemplate="<b>%{customdata[0]}</b><br>Ingresos: $%{x:,.2f}<br>Servicios: %{customdata[1]}<extra></extra>")
     fig.update_layout(bargap=0.38, showlegend=False)
     _ejes_dinero_h(fig)
     return estilo_plotly(fig, max(260, 46 * len(top) + 60))
 
-
 def grafico_tendencia(df):
     d = df.dropna(subset=["Fecha"]).groupby("Fecha")["Precio"].sum().reset_index().sort_values("Fecha")
-    fig = go.Figure(go.Scatter(
-        x=d["Fecha"], y=d["Precio"], mode="lines+markers",
-        line=dict(color=COLOR_PRIMARIO, width=2.5, shape="spline", smoothing=0.6),
-        marker=dict(size=8, color=COLOR_PRIMARIO, line=dict(color="#FFFFFF", width=2)),
-        fill="tozeroy", fillcolor="rgba(79,70,229,0.10)",
-        hovertemplate="%{x|%d/%m/%Y}<br><b>$%{y:,.2f}</b><extra></extra>",
-    ))
+    fig = go.Figure(go.Scatter(x=d["Fecha"], y=d["Precio"], mode="lines+markers", line=dict(color=COLOR_PRIMARIO, width=2.5, shape="spline", smoothing=0.6), marker=dict(size=8, color=COLOR_PRIMARIO, line=dict(color="#FFFFFF", width=2)), fill="tozeroy", fillcolor="rgba(79,70,229,0.10)", hovertemplate="%{x|%d/%m/%Y}<br><b>$%{y:,.2f}</b><extra></extra>"))
     fig.update_xaxes(title=None, showgrid=False, tickformat="%d/%m", tickfont=dict(color="#64748B"), linecolor="#CBD5E1")
     fig.update_yaxes(title=None, gridcolor="#EEF2F7", zeroline=False, tickprefix="$", tickformat=",.0f", tickfont=dict(color="#64748B"))
     return estilo_plotly(fig, 300)
 
 
 # =====================================================================
-# 11. DOCUMENTOS PDF (recibo, memorándum y acta)
+# 11. DOCUMENTOS PDF
 # =====================================================================
 def _encabezado_pdf(pdf, subtitulo, color=(10, 25, 47), linea_extra=None):
     if os.path.exists(logo_path): pdf.image(logo_path, 10, 8, 25); pdf.set_x(40)
@@ -1429,7 +1068,6 @@ def _encabezado_pdf(pdf, subtitulo, color=(10, 25, 47), linea_extra=None):
         if os.path.exists(logo_path): pdf.set_x(40)
         pdf.cell(0, 5, limpiar_texto_pdf(linea_extra), 0, 1, 'L')
     pdf.ln(5)
-
 
 def generar_recibo_pdf(e_dat, periodo_texto):
     class PDF(FPDF):
@@ -1447,7 +1085,7 @@ def generar_recibo_pdf(e_dat, periodo_texto):
     pdf.cell(130, 8, ' Concepto', 1, 0, 'L', fill=True); pdf.cell(60, 8, ' Monto ($)', 1, 1, 'R', fill=True)
     pdf.set_font('helvetica', '', 10); pdf.set_text_color(50, 50, 50)
 
-    for d, v in [("Sueldo Base Acumulado (Bruto)", e_dat['Base']), ("Extra Bruto Generado", e_dat['Extra']), ("Comisiones Netas a Pagar", e_dat['Com Neta']), ("Bonos Extras", e_dat['Bonos'])]:
+    for d, v in [("Sueldo Base Acumulado (Bruto)", e_dat['Base Bruta']), ("Extra Bruto Generado", e_dat['Extra']), ("Comisiones Netas a Pagar", e_dat['Com Neta']), ("Bonos Extras", e_dat['Bonos'])]:
         if v > 0 or "Sueldo" in d or "Comisiones" in d:
             pdf.cell(130, 8, limpiar_texto_pdf(f"  {d}"), 1, 0, 'L'); pdf.cell(60, 8, f"${v:,.2f}", 1, 1, 'R')
 
@@ -1471,7 +1109,6 @@ def generar_recibo_pdf(e_dat, periodo_texto):
     pdf.multi_cell(0, 6, limpiar_texto_pdf(f"  {notas_val}"), 0, 'L')
     return generar_pdf_bytes(pdf)
 
-
 def _firmas_pdf(pdf, izquierda, derecha):
     pdf.ln(28)
     y = pdf.get_y()
@@ -1481,12 +1118,9 @@ def _firmas_pdf(pdf, izquierda, derecha):
     pdf.set_xy(20, y + 2); pdf.cell(70, 5, limpiar_texto_pdf(izquierda), 0, 0, 'C')
     pdf.set_xy(120, y + 2); pdf.cell(70, 5, limpiar_texto_pdf(derecha), 0, 1, 'C')
 
-
 def generar_memo_pdf(destinatario, asunto, texto):
     class PDFMemo(FPDF):
-        def header(self):
-            _encabezado_pdf(self, 'Memorándum Interno')
-
+        def header(self): _encabezado_pdf(self, 'Memorándum Interno')
     pdf_m = PDFMemo(); pdf_m.add_page()
     pdf_m.set_font('helvetica', '', 10); pdf_m.set_text_color(80, 80, 80)
     pdf_m.cell(0, 6, limpiar_texto_pdf(f" Fecha: {ahora_sv().strftime('%d/%m/%Y')}"), 0, 1, 'L')
@@ -1497,12 +1131,9 @@ def generar_memo_pdf(destinatario, asunto, texto):
     _firmas_pdf(pdf_m, "Administración / Gerencia General", f"Recibido: {destinatario}")
     return generar_pdf_bytes(pdf_m)
 
-
 def generar_acta_pdf(destinatario, tipo_falta, motivo):
     class PDFAmon(FPDF):
-        def header(self):
-            _encabezado_pdf(self, 'Acta de Amonestación', color=(201, 42, 42))
-
+        def header(self): _encabezado_pdf(self, 'Acta de Amonestación', color=(201, 42, 42))
     pdf_a = PDFAmon(); pdf_a.add_page()
     pdf_a.set_font('helvetica', '', 10); pdf_a.set_text_color(80, 80, 80)
     pdf_a.cell(0, 6, limpiar_texto_pdf(f" Fecha: {ahora_sv().strftime('%d/%m/%Y')}"), 0, 1, 'L')
@@ -1512,10 +1143,6 @@ def generar_acta_pdf(destinatario, tipo_falta, motivo):
     _firmas_pdf(pdf_a, "Gerencia General", f"Colaborador: {destinatario}")
     return generar_pdf_bytes(pdf_a)
 
-
-# =====================================================================
-# 12. CORREO (Gmail)
-# =====================================================================
 def abrir_smtp():
     remitente = st.secrets["EMAIL_USER"]
     password = st.secrets["EMAIL_PASS"]
@@ -1523,7 +1150,6 @@ def abrir_smtp():
     servidor_smtp.starttls()
     servidor_smtp.login(remitente, password)
     return servidor_smtp, remitente
-
 
 def mensaje_recibo(remitente, e_dat, pdf_bytes, nombre_adjunto, periodo_texto):
     msg = MIMEMultipart()
@@ -1536,68 +1162,48 @@ def mensaje_recibo(remitente, e_dat, pdf_bytes, nombre_adjunto, periodo_texto):
     msg.attach(parte_adjunta)
     return msg
 
-
 def correo_valido(correo):
     return bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", _texto(correo)))
-
 
 def registrar_auditoria(tipo, destinatario):
     st.session_state["historial_auditoria"].append({"Fecha": ahora_sv().strftime('%Y-%m-%d %H:%M:%S'), "Tipo Documento": tipo, "Destinatario": destinatario})
 
-
-# =====================================================================
-# 13. PERFIL DE PROVEEDOR (CRM)
-# =====================================================================
 def _iniciales(nombre):
     partes = [p for p in re.split(r"\s+", _texto(nombre)) if p]
     return ("".join(p[0] for p in partes[:2]) or "?").upper()
 
-
 def _parse_fecha(v):
     t = _texto(v)
-    if not t:
-        return None
+    if not t: return None
     fecha = pd.to_datetime(t, dayfirst=not re.match(r"^\d{4}-", t), errors="coerce")
     return None if pd.isna(fecha) else fecha
-
 
 def _valoracion_pct(v):
     n = _a_numero(v)
     return None if n is None else max(0.0, min(100.0, n))
 
-
 def estado_contrato(p):
     venc = _parse_fecha(p.get("Fecha_Vencimiento"))
-    if venc is None:
-        return ("Sin fecha de vencimiento", "")
+    if venc is None: return ("Sin fecha de vencimiento", "")
     dias = (venc.normalize() - pd.Timestamp(ahora_sv().date())).days
-    if dias < 0:
-        return (f"Vencido hace {abs(dias)} días", "red")
-    if dias <= 30:
-        return (f"Vence en {dias} días", "amber")
+    if dias < 0: return (f"Vencido hace {abs(dias)} días", "red")
+    if dias <= 30: return (f"Vence en {dias} días", "amber")
     return ("Contrato vigente", "green")
-
 
 def crm_seccion(titulo, color):
     return f"<div class='crm-section-title'><span class='sdot' style='background:{color};box-shadow:0 0 0 3px {color}26'></span>{titulo}</div>"
 
-
 def crm_campo(icono, etiqueta, valor, tipo="texto"):
     t = _texto(valor)
     e = html.escape(t)
-    if not t:
-        contenido = "<div class='crm-value empty'>Sin registrar</div>"
-    elif tipo == "correo":
-        contenido = f"<div class='crm-value'><a href='mailto:{e}'>{e}</a></div>"
+    if not t: contenido = "<div class='crm-value empty'>Sin registrar</div>"
+    elif tipo == "correo": contenido = f"<div class='crm-value'><a href='mailto:{e}'>{e}</a></div>"
     elif tipo == "telefono":
         tel = re.sub(r"[^\d+]", "", t)
         contenido = f"<div class='crm-value mono'><a href='tel:{tel}'>{e}</a></div>"
-    elif tipo == "mono":
-        contenido = f"<div class='crm-value mono'>{e}</div>"
-    else:
-        contenido = f"<div class='crm-value'>{e}</div>"
+    elif tipo == "mono": contenido = f"<div class='crm-value mono'>{e}</div>"
+    else: contenido = f"<div class='crm-value'>{e}</div>"
     return f"<div class='crm-field'><div class='crm-ico'>{icono}</div><div><div class='crm-label'>{etiqueta}</div>{contenido}</div></div>"
-
 
 def crm_fecha(icono, etiqueta, valor, extra=""):
     f = _parse_fecha(valor)
@@ -1605,48 +1211,31 @@ def crm_fecha(icono, etiqueta, valor, extra=""):
     derecha = f"<div class='r'>{extra}{html.escape(mostrar)}</div>" if mostrar else "<div class='r empty'>Pendiente</div>"
     return f"<div class='crm-date'><div class='l'><span>{icono}</span>{etiqueta}</div>{derecha}</div>"
 
-
 FECHAS_PROVEEDOR = [
-    ("📝", "Contrato firmado", "Fecha_Contrato"),
-    ("⏳", "Vencimiento del contrato", "Fecha_Vencimiento"),
-    ("🔁", "Revisión del contrato", "Fecha_Rev_Contrato"),
-    ("✅", "Aprobación", "Fecha_Aprobacion"),
-    ("🔍", "Última revisión", "Fecha_Ultima_Rev"),
-    ("📆", "Próxima revisión", "Fecha_Prox_Rev"),
-    ("🛡️", "Calificación de riesgo", "Fecha_Calif_Riesgo"),
-    ("📑", "Diligencia debida", "Fecha_Diligencia"),
+    ("📝", "Contrato firmado", "Fecha_Contrato"), ("⏳", "Vencimiento del contrato", "Fecha_Vencimiento"), ("🔁", "Revisión del contrato", "Fecha_Rev_Contrato"), ("✅", "Aprobación", "Fecha_Aprobacion"), ("🔍", "Última revisión", "Fecha_Ultima_Rev"), ("📆", "Próxima revisión", "Fecha_Prox_Rev"), ("🛡️", "Calificación de riesgo", "Fecha_Calif_Riesgo"), ("📑", "Diligencia debida", "Fecha_Diligencia"),
 ]
-
 
 def nombre_proveedor(p):
     return _texto(p.get("Nombre_Proveedor")) or f"Prov {_texto(p.get('ID_Proveedor'))}"
 
-
-# --- Eliminación de proveedores (callbacks: se ejecutan antes del rerun automático) ---
-def pedir_borrado_proveedor(idx, nombre):
-    st.session_state["prov_a_eliminar"] = (idx, nombre)
-
-
-def cancelar_borrado_proveedor():
-    st.session_state.pop("prov_a_eliminar", None)
-
+def pedir_borrado_proveedor(idx, nombre): st.session_state["prov_a_eliminar"] = (idx, nombre)
+def cancelar_borrado_proveedor(): st.session_state.pop("prov_a_eliminar", None)
 
 def confirmar_borrado_proveedor(idx, nombre):
     ss = st.session_state
     ss.pop("prov_a_eliminar", None)
     provs = ss["proveedores"]
     if idx >= len(provs) or nombre_proveedor(provs[idx]) != nombre:
-        notificar_error("No se pudo eliminar: la lista de proveedores cambió mientras confirmabas. Inténtalo de nuevo.")
+        notificar_error("No se pudo eliminar: la lista cambió mientras confirmabas.")
         return
     encabezados = list(provs[idx].keys())
     ss["proveedores"] = provs[:idx] + provs[idx + 1:]
-    ss.pop("prov_seleccionado", None)  # la búsqueda vuelve al primer proveedor de la lista
-    ss["nonce_editor_prov"] += 1       # la tabla de edición se recarga con la lista nueva
+    ss.pop("prov_seleccionado", None)
+    ss["nonce_editor_prov"] += 1
     if guardar_proveedores(ss["proveedores"], encabezados_si_vacio=encabezados):
         notificar(f"Proveedor «{nombre}» eliminado.", "🗑️")
     else:
-        notificar_error(f"«{nombre}» se eliminó de esta sesión, pero no se pudo actualizar Google Sheets. Si recargas la app volverá a aparecer.")
-
+        notificar_error(f"«{nombre}» se eliminó, pero no se pudo actualizar Google Sheets.")
 
 def render_perfil_proveedor(p, idx):
     nombre = _texto(p.get("Nombre_Proveedor")) or "Proveedor sin nombre"
@@ -1659,24 +1248,19 @@ def render_perfil_proveedor(p, idx):
 
     with tarjeta("prov_header"):
         chips = chip(f"● {estado_txt}", estado_cls)
-        if _texto(p.get("Pais")):
-            chips += chip(f"🌎 {_esc(p.get('Pais'))}")
-        if _texto(p.get("ID_Proveedor")):
-            chips += chip(f"# ID {_esc(p.get('ID_Proveedor'))}", "indigo")
+        if _texto(p.get("Pais")): chips += chip(f"🌎 {_esc(p.get('Pais'))}")
+        if _texto(p.get("ID_Proveedor")): chips += chip(f"# ID {_esc(p.get('ID_Proveedor'))}", "indigo")
         desc = _esc(p.get("Descripcion")) or "Sin descripción registrada"
         h1, h2 = st.columns([5, 1.35])
         with h1:
-            md(f"<div class='crm-head'><div class='crm-avatar'>{html.escape(_iniciales(nombre))}</div>"
-               f"<div><div class='crm-kicker'>Proveedor</div><div class='crm-name'>{html.escape(nombre)}</div>"
-               f"<div class='crm-desc'>{desc}</div><div class='chips' style='margin-top:10px'>{chips}</div></div></div>")
+            md(f"<div class='crm-head'><div class='crm-avatar'>{html.escape(_iniciales(nombre))}</div><div><div class='crm-kicker'>Proveedor</div><div class='crm-name'>{html.escape(nombre)}</div><div class='crm-desc'>{desc}</div><div class='chips' style='margin-top:10px'>{chips}</div></div></div>")
         with h2:
             espacio(14)
             with zona("peligro_eliminar"):
                 st.button("🗑️ Eliminar Proveedor", key="btn_eliminar_prov", on_click=pedir_borrado_proveedor, args=(idx, clave), **ancho(st.button))
 
         if st.session_state.get("prov_a_eliminar") == (idx, clave):
-            md(f"<div class='confirmar-borrado'>⚠️ ¿Eliminar definitivamente a <b>{html.escape(nombre)}</b>? "
-               f"También se borrará de Google Sheets y no se puede deshacer.</div>")
+            md(f"<div class='confirmar-borrado'>⚠️ ¿Eliminar definitivamente a <b>{html.escape(nombre)}</b>? También se borrará de Google Sheets.</div>")
             k1, k2, _ = st.columns([1.2, 1, 3])
             with k1:
                 with zona("peligro_confirmar"):
@@ -1696,32 +1280,18 @@ def render_perfil_proveedor(p, idx):
     c1, c2, c3 = st.columns(3)
     with c1:
         with tarjeta("prov_contacto"):
-            md(crm_seccion("Información de contacto", "#4F46E5")
-               + crm_campo("👤", "Contacto", p.get("Nombre_Contacto"))
-               + crm_campo("📞", "Teléfono", p.get("Telefono_1"), "telefono")
-               + crm_campo("📧", "Correo electrónico", p.get("Correo"), "correo")
-               + crm_campo("📍", "Dirección", p.get("Direccion_1"))
-               + crm_campo("🏙️", "Ciudad / Dirección 2", p.get("Direccion_2"))
-               + crm_campo("🌎", "País", p.get("Pais")))
+            md(crm_seccion("Información de contacto", "#4F46E5") + crm_campo("👤", "Contacto", p.get("Nombre_Contacto")) + crm_campo("📞", "Teléfono", p.get("Telefono_1"), "telefono") + crm_campo("📧", "Correo electrónico", p.get("Correo"), "correo") + crm_campo("📍", "Dirección", p.get("Direccion_1")) + crm_campo("🏙️", "Ciudad / Dirección 2", p.get("Direccion_2")) + crm_campo("🌎", "País", p.get("Pais")))
     with c2:
         with tarjeta("prov_finanzas"):
-            md(crm_seccion("Datos financieros", "#059669")
-               + crm_campo("🏦", "Banco", p.get("Banco"))
-               + crm_campo("💳", "Número de cuenta", p.get("Cuenta"), "mono")
-               + crm_campo("🤝", "Patrocinador", p.get("Patrocinador"))
-               + crm_campo("☎️", "Teléfono del patrocinador", p.get("Telefono_2"), "telefono"))
-            if _texto(p.get("Cuenta")):
-                st.caption("Copiar número de cuenta")
-                st.code(_texto(p.get("Cuenta")), language=None)
+            md(crm_seccion("Datos financieros", "#059669") + crm_campo("🏦", "Banco", p.get("Banco")) + crm_campo("💳", "Número de cuenta", p.get("Cuenta"), "mono") + crm_campo("🤝", "Patrocinador", p.get("Patrocinador")) + crm_campo("☎️", "Teléfono del patrocinador", p.get("Telefono_2"), "telefono"))
+            if _texto(p.get("Cuenta")): st.caption("Copiar número de cuenta"); st.code(_texto(p.get("Cuenta")), language=None)
     with c3:
         with tarjeta("prov_fechas"):
             filas = ""
             for icono, etiqueta, campo in FECHAS_PROVEEDOR:
                 extra = ""
-                if campo == "Fecha_Vencimiento" and estado_cls:
-                    extra = chip("Vencido" if estado_cls == "red" else "Por vencer" if estado_cls == "amber" else "Vigente", estado_cls)
-                elif campo == "Fecha_Prox_Rev" and prox_atrasada:
-                    extra = chip("Atrasada", "red")
+                if campo == "Fecha_Vencimiento" and estado_cls: extra = chip("Vencido" if estado_cls == "red" else "Por vencer" if estado_cls == "amber" else "Vigente", estado_cls)
+                elif campo == "Fecha_Prox_Rev" and prox_atrasada: extra = chip("Atrasada", "red")
                 filas += crm_fecha(icono, etiqueta, p.get(campo), extra)
             md(crm_seccion("Contratos y auditoría", "#7C3AED") + filas)
 
@@ -1730,7 +1300,6 @@ def render_perfil_proveedor(p, idx):
         cuerpo = f"<div class='crm-text'>{notas}</div>" if notas else "<div class='crm-text empty'>Sin notas registradas para este proveedor.</div>"
         md(crm_seccion("Notas internas", "#F59E0B") + cuerpo)
 
-
 # =====================================================================
 # 14. ESTILOS + MENÚ LATERAL
 # =====================================================================
@@ -1738,39 +1307,24 @@ md(CSS)
 mostrar_notificaciones()
 
 with st.sidebar:
-    if os.path.exists(logo_path):
-        st.image(logo_path, **ancho(st.image))
-    else:
-        md(f"<div class='brand'><img src='{IMG_LOGO}' alt=''/><div><div class='brand-name'>Gio Group</div><div class='brand-sub'>Suite administrativa</div></div></div>")
+    if os.path.exists(logo_path): st.image(logo_path, **ancho(st.image))
+    else: md(f"<div class='brand'><img src='{IMG_LOGO}' alt=''/><div><div class='brand-name'>Gio Group</div><div class='brand-sub'>Suite administrativa</div></div></div>")
 
     menu_seleccionado = option_menu(
-        None,
-        ["Dashboard", "Planillas", "Directorio de Proveedores", "Memorándums", "Amonestaciones", "Auditoría", "Configuración"],
+        None, ["Dashboard", "Planillas", "Directorio de Proveedores", "Memorándums", "Amonestaciones", "Auditoría", "Configuración"],
         icons=["grid-1x2-fill", "wallet-fill", "journal-bookmark-fill", "envelope-paper-fill", "shield-fill-exclamation", "clock-fill", "gear-fill"],
         default_index=0, key="menu_principal",
-        styles={
-            "container": {"padding": "0", "background-color": "transparent"},
-            "icon": {"font-size": "15px"},
-            "nav-link": {"font-family": "Inter, -apple-system, Segoe UI, sans-serif", "font-size": "14px", "font-weight": "500",
-                         "color": "#475569", "border-radius": "10px", "margin": "2px 0", "padding": "10px 12px", "--hover-color": "#F1F5F9"},
-            "nav-link-selected": {"background-color": "#EEF2FF", "color": "#4338CA", "font-weight": "600"},
-        },
+        styles={"container": {"padding": "0", "background-color": "transparent"}, "icon": {"font-size": "15px"}, "nav-link": {"font-family": "Inter, sans-serif", "font-size": "14px", "font-weight": "500", "color": "#475569", "border-radius": "10px", "margin": "2px 0", "padding": "10px 12px", "--hover-color": "#F1F5F9"}, "nav-link-selected": {"background-color": "#EEF2FF", "color": "#4338CA", "font-weight": "600"}}
     )
 
-    if "sheets_ok" not in st.session_state:
-        st.session_state["sheets_ok"] = _documento() is not None
+    if "sheets_ok" not in st.session_state: st.session_state["sheets_ok"] = _documento() is not None
     estado_sheets = "<span class='dot on'></span><b>Conectado</b>" if st.session_state["sheets_ok"] else "<span class='dot off'></span><b>Modo local</b>"
     estado_pdf = "<span class='dot on'></span><b>Sincronizado</b>" if st.session_state["pdf_ok"] else "<span class='dot off'></span><b>Pendiente</b>"
-    md(f"<div class='side-card'><div class='side-title'>Estado del sistema</div>"
-       f"<div class='side-row'><span>Google Sheets</span><span>{estado_sheets}</span></div>"
-       f"<div class='side-row'><span>Reporte de ventas</span><span>{estado_pdf}</span></div>"
-       f"<div class='side-row'><span>Quincenas</span><b>{st.session_state['quincenas_multiplicador']:g}</b></div>"
-       f"<div class='side-row'><span>Colaboradores</span><b>{len(st.session_state['empleados'])}</b></div></div>")
+    md(f"<div class='side-card'><div class='side-title'>Estado del sistema</div><div class='side-row'><span>Google Sheets</span><span>{estado_sheets}</span></div><div class='side-row'><span>Reporte de ventas</span><span>{estado_pdf}</span></div><div class='side-row'><span>Quincenas</span><b>{st.session_state['quincenas_multiplicador']:g}</b></div><div class='side-row'><span>Colaboradores</span><b>{len(st.session_state['empleados'])}</b></div></div>")
     md("<div class='profile'><div class='avatar'>GG</div><div><div class='profile-name'>Administración</div><div class='profile-role'>Gerencia General</div></div></div>")
 
-
 # =====================================================================
-# 15. PANEL DE SINCRONIZACIÓN DEL PDF (Dashboard y Planillas)
+# 15. PANEL DE SINCRONIZACIÓN
 # =====================================================================
 def hero_dashboard():
     ss = st.session_state
@@ -1778,38 +1332,23 @@ def hero_dashboard():
     saludo = "Buenos días" if ahora.hour < 12 else "Buenas tardes" if ahora.hour < 19 else "Buenas noches"
     fecha = f"{DIAS[ahora.weekday()].capitalize()}, {ahora.day} de {MESES[ahora.month - 1]} de {ahora.year}"
     chips = f"<span class='hero-chip'>📅 {html.escape(ss['periodo_texto'])}</span>"
-    if ss.get("pdf_ok"):
-        chips += f"<span class='hero-chip'>✅ {html.escape(ss['pdf_nombre'])}</span>"
-    else:
-        chips += "<span class='hero-chip'>⏳ Esperando reporte de ventas</span>"
+    if ss.get("pdf_ok"): chips += f"<span class='hero-chip'>✅ {html.escape(ss['pdf_nombre'])}</span>"
+    else: chips += "<span class='hero-chip'>⏳ Esperando reporte de ventas</span>"
     chips += f"<span class='hero-chip'>👥 {len(ss['empleados'])} colaboradores</span>"
-    md(f"<div class='hero'><div class='hero-body'><div class='hero-kicker'>{fecha}</div>"
-       f"<div class='hero-title'>{saludo}, Gerencia</div>"
-       f"<div class='hero-sub'>El pulso de Gio Group en una sola vista: ingresos, planilla y rentabilidad del período, calculados directamente desde el reporte de ventas.</div>"
-       f"<div class='hero-chips'>{chips}</div></div><img class='hero-img' src='{IMG_HERO}' alt=''/></div>")
-
+    md(f"<div class='hero'><div class='hero-body'><div class='hero-kicker'>{fecha}</div><div class='hero-title'>{saludo}, Gerencia</div><div class='hero-sub'>El pulso de Gio Group en una sola vista: ingresos, planilla y rentabilidad del período, calculados directamente desde el reporte de ventas.</div><div class='hero-chips'>{chips}</div></div><img class='hero-img' src='{IMG_HERO}' alt=''/></div>")
 
 def panel_diagnostico():
     ss = st.session_state
-    if not ss.get("pdf_bytes"):
-        return
+    if not ss.get("pdf_bytes"): return
     meta = ss.get("pdf_meta") or {}
     with st.expander("🔬 Diagnóstico de lectura y ajustes del reporte", expanded=not ss.get("pdf_ok", False)):
-        if ss.get("pdf_error"):
-            st.error(ss["pdf_error"])
-
-        chips = (chip(f"📄 {meta.get('paginas', '—')} página(s)") + chip(f"🧭 {meta.get('estrategia', '—')}")
-                 + chip(f"📋 {meta.get('filas_leidas', 0)} filas leídas") + chip(f"✅ {meta.get('servicios', 0)} servicios válidos", "green"))
-        if meta.get("excluidas_total"):
-            chips += chip(f"➖ {meta['excluidas_total']} filas de total excluidas", "sky")
-        if meta.get("rellenadas"):
-            chips += chip(f"↪️ {meta['rellenadas']} filas asignadas al profesional anterior", "indigo")
-        if meta.get("sin_precio"):
-            chips += chip(f"⚠️ {meta['sin_precio']} filas sin precio legible", "amber")
-        if meta.get("sin_profesional"):
-            chips += chip(f"⚠️ {meta['sin_profesional']} filas sin profesional ({usd(meta.get('monto_sin_profesional', 0))})", "amber")
-        if meta.get("periodo_fuente"):
-            chips += chip(f"📅 Período: {meta['periodo_fuente']}", "indigo")
+        if ss.get("pdf_error"): st.error(ss["pdf_error"])
+        chips = (chip(f"📄 {meta.get('paginas', '—')} página(s)") + chip(f"🧭 {meta.get('estrategia', '—')}") + chip(f"📋 {meta.get('filas_leidas', 0)} filas leídas") + chip(f"✅ {meta.get('servicios', 0)} servicios válidos", "green"))
+        if meta.get("excluidas_total"): chips += chip(f"➖ {meta['excluidas_total']} filas de total excluidas", "sky")
+        if meta.get("rellenadas"): chips += chip(f"↪️ {meta['rellenadas']} filas asignadas al profesional anterior", "indigo")
+        if meta.get("sin_precio"): chips += chip(f"⚠️ {meta['sin_precio']} filas sin precio legible", "amber")
+        if meta.get("sin_profesional"): chips += chip(f"⚠️ {meta['sin_profesional']} filas sin profesional ({usd(meta.get('monto_sin_profesional', 0))})", "amber")
+        if meta.get("periodo_fuente"): chips += chip(f"📅 Período: {meta['periodo_fuente']}", "indigo")
         md(f"<div class='chips'>{chips}</div>")
 
         columnas = meta.get("columnas") or []
@@ -1823,8 +1362,7 @@ def panel_diagnostico():
             d.selectbox("💆 Servicio", opciones, key="map_servicio", on_change=reprocesar_pdf, help=f"Detectada: {meta.get('c_ser') or '—'}")
             e.selectbox("📅 Fecha", opciones, key="map_fecha", on_change=reprocesar_pdf, help=f"Detectada: {meta.get('c_fecha') or '—'}")
             f, g = st.columns([1, 2])
-            f.selectbox("🗓️ Quincenas a liquidar", [AUTO, 1.0, 2.0, 3.0, 4.0, 6.0], key="map_quincenas", on_change=reprocesar_pdf,
-                        format_func=lambda v: f"Automático ({st.session_state['quincenas_multiplicador']:g})" if v == AUTO else f"{v:g} quincena(s)")
+            f.selectbox("🗓️ Quincenas a liquidar", [AUTO, 1.0, 2.0, 3.0, 4.0, 6.0], key="map_quincenas", on_change=reprocesar_pdf, format_func=lambda v: f"Automático ({st.session_state['quincenas_multiplicador']:g})" if v == AUTO else f"{v:g} quincena(s)")
             with g:
                 espacio(28)
                 st.checkbox("Asignar filas sin nombre al profesional de arriba (reportes agrupados)", value=True, key="map_ffill", on_change=reprocesar_pdf)
@@ -1834,10 +1372,9 @@ def panel_diagnostico():
             df_res = pd.DataFrame.from_dict(ss["resumen_pdf"], orient="index").reset_index().rename(columns={"index": "Colaborador"})
             st.dataframe(df_res.style.format({"Ventas": "${:,.2f}"}), hide_index=True, **ancho(st.dataframe))
         if meta.get("sin_asignar"):
-            st.warning(f"Hay {len(meta['sin_asignar'])} nombre(s) en el PDF que no coinciden con ningún colaborador. Sus ventas cuentan en los ingresos, pero no generan comisión. Agrega el nombre como alias en Configuración → Personal.")
+            st.warning(f"Hay {len(meta['sin_asignar'])} nombre(s) en el PDF que no coinciden con ningún colaborador. Agrega el nombre como alias en Configuración → Personal.")
             st.dataframe(pd.DataFrame(meta["sin_asignar"]).style.format({"Ventas": "${:,.2f}"}), hide_index=True, **ancho(st.dataframe))
-        if meta.get("multiples"):
-            st.warning(f"{meta['multiples']} servicio(s) coinciden con más de un colaborador: revisa que los alias no se repitan.")
+        if meta.get("multiples"): st.warning(f"{meta['multiples']} servicio(s) coinciden con más de un colaborador: revisa que los alias no se repitan.")
         if ss.get("reporte_df") is not None:
             md(titulo_seccion("Vista previa de servicios leídos"))
             st.dataframe(ss["reporte_df"].head(25).style.format({"Precio": "${:,.2f}", "Extra": "${:,.2f}"}), hide_index=True, **ancho(st.dataframe))
@@ -1845,14 +1382,12 @@ def panel_diagnostico():
             md(titulo_seccion("Texto extraído del PDF", "Útil para revisar el formato si no se reconoce la tabla."))
             st.code(meta["muestra_texto"], language=None)
 
-
 def panel_sincronizacion():
     ss = st.session_state
     with tarjeta("sync"):
         md(titulo_seccion("📥 Reporte de ventas", "Sube el PDF del período y la planilla completa se calcula de una sola vez."))
         c1, c2 = st.columns([3, 1])
-        with c1:
-            archivo_subido = st.file_uploader("Reporte de ventas (PDF)", type=["pdf"], key=f"pdf_uploader_{ss['uploader_nonce']}", label_visibility="collapsed")
+        with c1: archivo_subido = st.file_uploader("Reporte de ventas (PDF)", type=["pdf"], key=f"pdf_uploader_{ss['uploader_nonce']}", label_visibility="collapsed")
         with c2:
             st.button("🔄 Recalcular", on_click=reprocesar_pdf, disabled=not ss.get("pdf_bytes"), **ancho(st.button))
             st.button("🧹 Limpiar reporte", on_click=limpiar_reporte_pdf, **ancho(st.button))
@@ -1860,24 +1395,19 @@ def panel_sincronizacion():
         if archivo_subido is not None:
             pdf_bytes = archivo_subido.getvalue()
             pdf_hash = hashlib.md5(pdf_bytes).hexdigest()
-            # Solo se procesa un archivo NUEVO: navegar o editar no vuelve a leer ni pisa los cambios manuales
             if pdf_hash != ss["pdf_hash"]:
                 ss["pdf_hash"], ss["pdf_nombre"], ss["pdf_bytes"] = pdf_hash, archivo_subido.name, pdf_bytes
-                for k in CLAVES_MAPEO:
-                    ss.pop(k, None)
+                for k in CLAVES_MAPEO: ss.pop(k, None)
                 with st.spinner("Analizando el reporte de ventas..."):
                     ok, msg = ejecutar_procesamiento()
                 st.toast(msg, icon="✅" if ok else "⚠️")
 
         chips = chip(f"📅 {html.escape(ss['periodo_texto'])}", "indigo")
-        if ss.get("pdf_nombre"):
-            chips += chip(f"📄 {html.escape(ss['pdf_nombre'])}", "green" if ss.get("pdf_ok") else "red")
-        if ss.get("pdf_ok"):
-            chips += chip(f"🧾 {ss['pdf_meta'].get('servicios', 0)} servicios · {usd(ss['total_ingresos_pdf'])}", "green")
+        if ss.get("pdf_nombre"): chips += chip(f"📄 {html.escape(ss['pdf_nombre'])}", "green" if ss.get("pdf_ok") else "red")
+        if ss.get("pdf_ok"): chips += chip(f"🧾 {ss['pdf_meta'].get('servicios', 0)} servicios · {usd(ss['total_ingresos_pdf'])}", "green")
         md(f"<div class='chips'>{chips}</div>")
         panel_diagnostico()
     espacio(6)
-
 
 # =====================================================================
 # 16. PÁGINAS
@@ -1911,7 +1441,7 @@ if menu_seleccionado == "Dashboard":
         fila_kpis([
             kpi_html("✨", "Extras generados", usd(extras_total), "Excedente sobre $60 por servicio", "amber"),
             kpi_html("💼", "Comisiones netas", usd(comisiones_total), "A pagar a colaboradores", "indigo"),
-            kpi_html("🏛️", "Renta retenida", usd(renta_total), "10% sobre sueldos base", "sky"),
+            kpi_html("🏛️", "Renta retenida", usd(renta_total), "10% sobre sueldos base brutos", "sky"),
             kpi_html("🗓️", "Quincenas", f"{ss['quincenas_multiplicador']:g}", html.escape(ss["periodo_texto"]), "violet"),
         ])
         espacio(14)
@@ -1948,39 +1478,25 @@ if menu_seleccionado == "Dashboard":
 
         with tarjeta("resumen_colab"):
             md(titulo_seccion("Resumen ejecutivo por colaborador", "Ventas, comisión y neto a pagar del período"))
-            df_res = pd.DataFrame([{
-                "Colaborador": f["Colaborador"], "Modalidad": f["Modalidad"],
-                "Servicios": ss["resumen_pdf"].get(f["Colaborador"], {}).get("Servicios", 0),
-                "Ventas": f["Ventas PDF"], "Comisión neta": f["Com Neta"], "Neto a pagar": f["Total"],
-            } for f in filas]).sort_values("Ventas", ascending=False)
+            df_res = pd.DataFrame([{"Colaborador": f["Colaborador"], "Modalidad": f["Modalidad"], "Servicios": ss["resumen_pdf"].get(f["Colaborador"], {}).get("Servicios", 0), "Ventas": f["Ventas PDF"], "Comisión neta": f["Com Neta"], "Neto a pagar": f["Total"]} for f in filas]).sort_values("Ventas", ascending=False)
             st.dataframe(df_res.style.format({"Ventas": "${:,.2f}", "Comisión neta": "${:,.2f}", "Neto a pagar": "${:,.2f}"}), hide_index=True, **ancho(st.dataframe))
     else:
-        estado_vacio(IMG_REPORTE, "Tu tablero está listo para el primer reporte",
-                     "Sube el PDF de ventas en el panel de arriba y la app calculará todo de una sola vez.",
-                     ["Exporta el reporte de ventas del período en PDF.",
-                      "Arrástralo al panel «Reporte de ventas».",
-                      "Revisa el diagnóstico: servicios leídos, extras y comisiones por colaborador."])
+        estado_vacio(IMG_REPORTE, "Tu tablero está listo para el primer reporte", "Sube el PDF de ventas en el panel de arriba y la app calculará todo de una sola vez.", ["Exporta el reporte de ventas del período en PDF.", "Arrástralo al panel «Reporte de ventas».", "Revisa el diagnóstico: servicios leídos, extras y comisiones por colaborador."])
 
 elif menu_seleccionado == "Planillas":
-    encabezado_pagina("💼", "Planillas", "Sueldos, extras sobre $60, comisiones del 20% y recibos de pago.")
+    encabezado_pagina("💼", "Planillas", "Sueldos, extras sobre $60, comisiones y recibos de pago.")
     panel_sincronizacion()
 
     resumen_planilla = st.container()
 
-    if ss.get("detalle_extras"):
-        with st.expander(f"🔍 Desglose de servicios con extra · {len(ss['detalle_extras'])} servicios sobre $60"):
-            st.dataframe(pd.DataFrame(ss["detalle_extras"]).style.format({"Precio Final": "${:,.2f}", "Extra Generado": "${:,.2f}", "Retención (25%)": "${:,.2f}", "Comisión Neta": "${:,.2f}"}), hide_index=True, **ancho(st.dataframe))
-
-    md(titulo_seccion("👥 Colaboradores", "Abre cada colaborador para ajustar bonos, descuentos o notas. El neto se recalcula al instante."))
+    md(titulo_seccion("👥 Colaboradores", "Abre cada colaborador para ver el detalle de sus servicios y ajustar bonos. El neto se recalcula al instante."))
     datos_emp = []
     for emp, info in ss["empleados"].items():
         mod = info.get("mod", MOD_FIJO)
-        if "Estándar" in mod:
-            etiqueta_mod = "Estándar · extras sobre $60"
-        elif "Porcentaje" in mod:
-            etiqueta_mod = f"Porcentaje · {float(info.get('porc', 0) or 0):g}% de ventas"
-        else:
-            etiqueta_mod = "Salario fijo"
+        if "Estándar" in mod: etiqueta_mod = "Estándar · extras sobre $60"
+        elif "Porcentaje" in mod: etiqueta_mod = f"Porcentaje · {float(info.get('porc', 0) or 0):g}% de ventas"
+        else: etiqueta_mod = "Salario fijo"
+        
         with st.expander(f"👤 {emp}  ·  {info.get('rol', '')}  ·  {etiqueta_mod}"):
             r = ss.get("resumen_pdf", {}).get(emp)
             if r:
@@ -1990,18 +1506,17 @@ elif menu_seleccionado == "Planillas":
                     chips += chip(f"📣 Retención 25% {usd(ss.get(f'ret_pub_{emp}', 0))}", "sky")
             else:
                 chips = chip("Sin datos del reporte de ventas")
-            if "Porcentaje" in mod:
-                chips = chip("🪙 Sin sueldo base · gana solo su %", "violet") + chips
-            else:
-                chips = chip(f"🪙 Sueldo neto {usd(sueldo_neto_de(info))} / quincena", "violet") + chips
+                
+            if "Porcentaje" in mod: chips = chip("🪙 Sin sueldo base · gana solo su %", "violet") + chips
+            else: chips = chip(f"🪙 Sueldo neto {usd(sueldo_neto_de(info))} / quinc", "violet") + chips
             md(f"<div class='chips'>{chips}</div>")
 
             c1, c2, c3 = st.columns([1.2, 1, 1])
             with c1:
-                campo_persistente(st.number_input, "Sueldo Base ($)", f"base_{emp}", f"ui_b_{emp}", conv=float, step=0.01, format="%.2f",
-                                  help="Sueldo neto quincenal de la persona (Configuración → Personal) ÷ 0.90 × quincenas del período. Modalidad Porcentaje: $0.")
+                campo_persistente(st.number_input, "Sueldo Base Neto ($)", f"base_net_{emp}", f"ui_b_net_{emp}", conv=float, step=0.01, format="%.2f",
+                                  help="Sueldo Neto de este período libre de renta. El sistema calculará el bruto y el 10% automáticamente.")
                 campo_persistente(st.number_input, "Comisiones ($)", f"com_{emp}", f"ui_c_{emp}", conv=float, step=0.01, format="%.2f",
-                                  help="Estándar: (precio − 60) × 75% por cada servicio mayor a $60. Porcentaje: ventas × %.")
+                                  help="Estándar: (precio − 60) × 75%. Porcentaje: ventas × %.")
             with c2:
                 campo_persistente(st.number_input, "Bonos ($)", f"hex_{emp}", f"ui_h_{emp}", conv=float, step=0.01, format="%.2f")
                 campo_persistente(st.number_input, "Descuentos ($)", f"desc_{emp}", f"ui_d_{emp}", conv=float, step=0.01, format="%.2f")
@@ -2011,18 +1526,20 @@ elif menu_seleccionado == "Planillas":
 
             fila = calcular_fila_planilla(emp, info)
             md(f"<div class='neto'><div><div class='neto-label'>Neto a pagar</div>"
-               f"<div class='neto-formula'>Base {usd(fila['Base'])} + Comisión {usd(fila['Com Neta'])} + Bonos {usd(fila['Bonos'])} − Renta {usd(fila['Renta'])} − Descuentos {usd(fila['Desc'])}</div></div>"
+               f"<div class='neto-formula'>Base Neta {usd(fila['Base Neta'])} + Comisión {usd(fila['Com Neta'])} + Bonos {usd(fila['Bonos'])} − Descuentos {usd(fila['Desc'])}</div></div>"
                f"<div class='neto-valor'>{usd(fila['Total'])}</div></div>")
 
-            # Historial completo de servicios del período (transparencia total del pago)
             servicios = servicios_colaborador(emp, info)
             espacio(6)
             if servicios is not None and not servicios.empty:
-                md(titulo_seccion(f"🧾 Servicios del período · {len(servicios)}", "Cada servicio del PDF asignado a esta persona."))
-                cols_dinero = [c for c in ("Precio", "Extra generado", "Comisión") if c in servicios.columns]
-                resumen_serv = chip(f"Ventas {usd(servicios['Precio'].sum())}", "green") + chip(f"Extra {usd(servicios['Extra generado'].sum())}", "amber")
-                if "Comisión" in servicios.columns:
-                    resumen_serv += chip(f"Comisión {usd(servicios['Comisión'].sum())}", "indigo")
+                md(titulo_seccion(f"🧾 Detalles de servicios y extras ({len(servicios)})", "Revisión 1 a 1 de todo lo hecho en el PDF."))
+                cols_dinero = [c for c in servicios.columns if "Precio" in c or "Base" in c or "Extra" in c or "Retención" in c or "Comisión" in c]
+                
+                resumen_serv = chip(f"Ventas {usd(servicios['Precio Final'].sum())}", "green")
+                if "Extra Bruto" in servicios.columns: resumen_serv += chip(f"Extra {usd(servicios['Extra Bruto'].sum())}", "amber")
+                if "Retención Pauta 25%" in servicios.columns: resumen_serv += chip(f"- 25% Pauta: {usd(servicios['Retención Pauta 25%'].sum())}", "sky")
+                if "Comisión Neta" in servicios.columns: resumen_serv += chip(f"Comisión Neta: {usd(servicios['Comisión Neta'].sum())}", "indigo")
+                
                 md(f"<div class='chips'>{resumen_serv}</div>")
                 st.dataframe(servicios.style.format("${:,.2f}", subset=cols_dinero), hide_index=True,
                              height=min(420, 38 + 35 * len(servicios)), **ancho(st.dataframe))
@@ -2030,22 +1547,23 @@ elif menu_seleccionado == "Planillas":
                 md(f"<div class='chips'>{chip('No se encontraron servicios de esta persona en el reporte. Revisa su alias en Configuración.', 'amber')}</div>")
             else:
                 md(f"<div class='chips'>{chip('Sube el reporte de ventas para ver el detalle de servicios.')}</div>")
+                
         datos_emp.append(fila)
 
     if datos_emp:
         with resumen_planilla:
             fila_kpis([
                 kpi_html("🧾", "Planilla neta a pagar", usd(sum(d["Total"] for d in datos_emp)), f"{len(datos_emp)} colaboradores", "indigo"),
-                kpi_html("🪙", "Sueldos base", usd(sum(d["Base"] for d in datos_emp)), f"{ss['quincenas_multiplicador']:g} quincena(s)", "sky"),
-                kpi_html("💼", "Comisiones netas", usd(sum(d["Com Neta"] for d in datos_emp)), "Extras y porcentajes", "green"),
-                kpi_html("🏛️", "Renta retenida", usd(sum(d["Renta"] for d in datos_emp)), "10% sobre sueldo base", "amber"),
+                kpi_html("🪙", "Sueldos Base Neto", usd(sum(d["Base Neta"] for d in datos_emp)), f"{ss['quincenas_multiplicador']:g} quincena(s)", "sky"),
+                kpi_html("💼", "Comisiones Netas", usd(sum(d["Com Neta"] for d in datos_emp)), "Extras y porcentajes", "green"),
+                kpi_html("🏛️", "Renta retenida (10%)", usd(sum(d["Renta"] for d in datos_emp)), "Calculado sobre la base bruta", "amber"),
             ])
             espacio(14)
 
         espacio(8)
         with tarjeta("tabla_planilla"):
             md(titulo_seccion("📊 Planilla consolidada", "Incluye la fila de TOTAL general."))
-            cols_num = ["Ventas PDF", "Base", "Extra", "Ret Pub", "Com Neta", "Bonos", "Desc", "Renta", "Total"]
+            cols_num = ["Ventas PDF", "Base Bruta", "Base Neta", "Extra", "Ret Pub", "Com Neta", "Bonos", "Desc", "Renta", "Total"]
             df_pl = pd.DataFrame(datos_emp)
             df_tabla = df_pl[["Colaborador", "Modalidad"] + cols_num].copy()
             totales = {c: float(df_tabla[c].sum()) for c in cols_num}
@@ -2075,7 +1593,6 @@ elif menu_seleccionado == "Planillas":
                         ss['t_emp'] = e_sel
                     st.toast(f"Recibo de {e_sel} generado.", icon="📄")
 
-                # El recibo solo se muestra/envía si corresponde al colaborador seleccionado
                 if 't_pdf' in ss and ss.get('t_emp') == e_sel:
                     b1, b2 = st.columns(2)
                     with b1:
@@ -2083,8 +1600,7 @@ elif menu_seleccionado == "Planillas":
                     correo_ok = correo_valido(e_dat["Email"])
                     with b2:
                         enviar = st.button("🚀 Enviar por Gmail", disabled=not correo_ok, **ancho(st.button))
-                    if not correo_ok:
-                        st.warning("⚠️ Este colaborador no tiene un correo válido configurado.")
+                    if not correo_ok: st.warning("⚠️ Este colaborador no tiene un correo válido configurado.")
                     if enviar:
                         with st.spinner("Enviando comprobante por Gmail..."):
                             try:
@@ -2129,46 +1645,79 @@ elif menu_seleccionado == "Planillas":
                     if errores:
                         st.error("No se pudieron enviar algunos recibos:\n\n" + "\n".join(f"- {e}" for e in errores))
 
-# --- MÓDULO: DIRECTORIO DE PROVEEDORES ---
 elif menu_seleccionado == "Directorio de Proveedores":
     encabezado_pagina("📇", "Directorio de Proveedores", "Perfil 360° de cada proveedor: contacto, datos financieros y control de contratos.")
     proveedores = ss["proveedores"]
     nombres_provs = [nombre_proveedor(p) for p in proveedores]
 
-    col_sel, col_info = st.columns([2.2, 1])
-    with col_sel:
-        prov_seleccionado = st.selectbox("🔎 Buscar proveedor", nombres_provs, key="prov_seleccionado", placeholder="Escribe para buscar...")
-    with col_info:
-        alertas = sum(1 for p in proveedores if estado_contrato(p)[1] in ("red", "amber"))
-        chips = chip(f"📇 {len(proveedores)} proveedores", "indigo")
-        if alertas:
-            chips += chip(f"⚠️ {alertas} contrato(s) por atender", "amber")
-        espacio(26)
-        md(f"<div class='chips'>{chips}</div>")
-
-    if prov_seleccionado:
-        idx = nombres_provs.index(prov_seleccionado)
-        render_perfil_proveedor(proveedores[idx], idx)
+    # --- NUEVA VISTA PARA AÑADIR PROVEEDOR ---
+    if ss.get("mostrar_form_proveedor"):
+        st.button("⬅️ Volver al Directorio", on_click=lambda: ss.update(mostrar_form_proveedor=False))
+        with tarjeta("nuevo_prov"):
+            md(titulo_seccion("➕ Agregar Nuevo Proveedor", "Ingresa los datos para registrar un aliado comercial en la base de datos."))
+            with st.form("form_crear_proveedor", clear_on_submit=True):
+                c1, c2 = st.columns(2)
+                nombre_prov = c1.text_input("Nombre de la Empresa / Proveedor *")
+                contacto = c2.text_input("Nombre del Contacto Principal")
+                tel = c1.text_input("Teléfono de Contacto")
+                correo = c2.text_input("Correo Electrónico")
+                desc = st.text_input("Descripción / ¿Qué servicios provee?")
+                
+                md("<br><b>Datos Financieros y Contrato</b>")
+                c3, c4, c5 = st.columns(3)
+                banco = c3.text_input("Banco")
+                cuenta = c4.text_input("Número de Cuenta Bancaria")
+                vencimiento = c5.date_input("Fecha de Vencimiento de Contrato", value=None)
+                
+                espacio(10)
+                submit = st.form_submit_button("💾 Guardar Nuevo Proveedor", type="primary", use_container_width=True)
+                
+                if submit:
+                    if not nombre_prov.strip():
+                        st.error("⚠️ El Nombre del Proveedor es obligatorio.")
+                    else:
+                        nuevo = dict(PROVEEDOR_EJEMPLO)
+                        for k in nuevo: nuevo[k] = ""
+                        
+                        nuevo["ID_Proveedor"] = str(len(proveedores) + 1)
+                        nuevo["Nombre_Proveedor"] = nombre_prov.strip()
+                        nuevo["Nombre_Contacto"] = contacto.strip()
+                        nuevo["Telefono_1"] = tel.strip()
+                        nuevo["Correo"] = correo.strip()
+                        nuevo["Descripcion"] = desc.strip()
+                        nuevo["Banco"] = banco.strip()
+                        nuevo["Cuenta"] = cuenta.strip()
+                        if vencimiento:
+                            nuevo["Fecha_Vencimiento"] = vencimiento.strftime("%Y-%m-%d")
+                        
+                        ss["proveedores"].append(nuevo)
+                        if guardar_proveedores(ss["proveedores"]):
+                            notificar(f"Proveedor '{nombre_prov}' agregado exitosamente.", "✅")
+                        else:
+                            notificar_error("El proveedor se agregó localmente, pero no se pudo subir a Google Sheets.")
+                        
+                        ss["mostrar_form_proveedor"] = False
+                        st.rerun()
     else:
-        estado_vacio(IMG_DIRECTORIO, "Aún no hay proveedores", "Agrega el primero desde el editor de abajo.")
+        # VISTA PRINCIPAL DEL DIRECTORIO
+        col_sel, col_info, col_btn = st.columns([2.2, 1, 1])
+        with col_sel:
+            prov_seleccionado = st.selectbox("🔎 Buscar proveedor", nombres_provs, key="prov_seleccionado", placeholder="Escribe para buscar...")
+        with col_info:
+            alertas = sum(1 for p in proveedores if estado_contrato(p)[1] in ("red", "amber"))
+            chips = chip(f"📇 {len(proveedores)} proveedores", "indigo")
+            if alertas: chips += chip(f"⚠️ {alertas} contrato(s) por atender", "amber")
+            espacio(26)
+            md(f"<div class='chips'>{chips}</div>")
+        with col_btn:
+            espacio(26)
+            st.button("➕ Nuevo Proveedor", type="primary", on_click=lambda: ss.update(mostrar_form_proveedor=True), use_container_width=True)
 
-    espacio(8)
-    with st.expander("✏️ Agregar / editar proveedores (base de datos)", expanded=not proveedores):
-        df_prov = pd.DataFrame(proveedores) if proveedores else pd.DataFrame(columns=list(PROVEEDOR_EJEMPLO.keys()))
-        # El nonce reinicia el editor tras guardar o eliminar (evita filas duplicadas o ediciones aplicadas a otra fila)
-        df_prov_edited = st.data_editor(df_prov, num_rows="dynamic", key=f"editor_proveedores_{ss['nonce_editor_prov']}", **ancho(st.data_editor))
-        if st.button("💾 Guardar cambios de proveedores", type="primary"):
-            registros = _registros_validos(df_prov_edited.to_dict("records"))
-            if not registros:
-                st.toast("La lista de proveedores está vacía; no se guardó nada.", icon="⚠️")
-            else:
-                ss["proveedores"] = registros
-                ss["nonce_editor_prov"] += 1
-                if guardar_proveedores(registros):
-                    notificar("Base de proveedores actualizada.", "✅")
-                else:
-                    notificar_error("No se pudo sincronizar con Google Sheets. Los cambios de proveedores quedaron solo en esta sesión.")
-                st.rerun()
+        if prov_seleccionado:
+            idx = nombres_provs.index(prov_seleccionado)
+            render_perfil_proveedor(proveedores[idx], idx)
+        else:
+            estado_vacio(IMG_DIRECTORIO, "Aún no hay proveedores", "Agrega el primero dando clic en el botón azul de 'Nuevo Proveedor'.")
 
 elif menu_seleccionado == "Memorándums":
     encabezado_pagina("📝", "Memorándums internos", "Comunicaciones oficiales en PDF con la identidad de Gio Group.")
@@ -2190,12 +1739,7 @@ elif menu_seleccionado == "Memorándums":
                 st.download_button("⬇️ Descargar memorándum", data=ss['temp_memo_pdf'], file_name=ss['temp_memo_path'], mime="application/pdf")
     with c_tips:
         with tarjeta("memo_tips"):
-            md(titulo_seccion("Buenas prácticas")
-               + "<div class='tips'>"
-               + "<div class='tip'><span>🎯</span>Un solo tema por memorándum; el asunto debe resumirlo.</div>"
-               + "<div class='tip'><span>📅</span>Indica fechas y plazos concretos cuando haya una instrucción.</div>"
-               + "<div class='tip'><span>✍️</span>Imprime y pide la firma de recibido del colaborador.</div>"
-               + "<div class='tip'><span>🗂️</span>Cada documento queda registrado en Auditoría.</div></div>")
+            md(titulo_seccion("Buenas prácticas") + "<div class='tips'><div class='tip'><span>🎯</span>Un solo tema por memorándum; el asunto debe resumirlo.</div><div class='tip'><span>📅</span>Indica fechas y plazos concretos cuando haya una instrucción.</div><div class='tip'><span>✍️</span>Imprime y pide la firma de recibido del colaborador.</div><div class='tip'><span>🗂️</span>Cada documento queda registrado en Auditoría.</div></div>")
 
 elif menu_seleccionado == "Amonestaciones":
     encabezado_pagina("⚠️", "Faltas y amonestaciones", "Documenta incidentes y genera actas formales con espacio para firmas.")
@@ -2249,21 +1793,15 @@ elif menu_seleccionado == "Configuración":
     tab_personal, tab_conexion = st.tabs(["👥 Personal y sueldos", "☁️ Conexión"])
 
     with tab_personal:
-        st.caption("**Sueldo base neto**: lo que recibe cada persona por quincena. El bruto se calcula como neto ÷ 0.90 × quincenas del período. "
-                   "En modalidad Porcentaje el sueldo no se usa (base en cero y sin renta). "
-                   "**Alias**: el nombre con el que la persona aparece en el PDF de ventas (varios separados con |, por ejemplo GIO|MARVIN); si se deja vacío se usa su primer nombre.")
-        df_emp = pd.DataFrame([{"Nombre": n, "rol": i.get("rol", ""), "mod": i.get("mod", MOD_FIJO),
-                                "sueldo_base_neto": float(sueldo_neto_de(i)), "porc": float(i.get("porc", 0) or 0),
-                                "alias": i.get("alias", ""), "correo": i.get("correo", ""), "dui": i.get("dui", ""), "cuenta": i.get("cuenta", "")}
-                               for n, i in ss["empleados"].items()])
+        st.caption("**Sueldo base neto**: lo que recibe cada persona libre de renta por quincena. El bruto y la renta del 10% se calcularán automáticamente por detrás en planillas. En modalidad Porcentaje el sueldo se ignora.")
+        df_emp = pd.DataFrame([{"Nombre": n, "rol": i.get("rol", ""), "mod": i.get("mod", MOD_FIJO), "sueldo_base_neto": float(sueldo_neto_de(i)), "porc": float(i.get("porc", 0) or 0), "alias": i.get("alias", ""), "correo": i.get("correo", ""), "dui": i.get("dui", ""), "cuenta": i.get("cuenta", "")} for n, i in ss["empleados"].items()])
         df_editado = st.data_editor(
             df_emp, num_rows="dynamic", hide_index=True, key=f"editor_personal_{ss['nonce_editor_personal']}",
             column_config={
                 "Nombre": st.column_config.TextColumn("Nombre", required=True),
                 "rol": st.column_config.SelectboxColumn("Rol", options=ROLES, required=True),
                 "mod": st.column_config.SelectboxColumn("Modalidad", options=MODALIDADES, required=True, width="medium"),
-                "sueldo_base_neto": st.column_config.NumberColumn("Sueldo base neto (quincenal)", min_value=0.0, step=0.01, format="$%.2f",
-                                                                  help="Neto que recibe la persona por quincena. Se ignora en modalidad Porcentaje."),
+                "sueldo_base_neto": st.column_config.NumberColumn("Sueldo Base Neto (quincenal)", min_value=0.0, step=0.01, format="$%.2f", help="Neto que recibe la persona por quincena."),
                 "porc": st.column_config.NumberColumn("% Comisión", min_value=0, max_value=100, step=1, format="%.0f"),
                 "alias": st.column_config.TextColumn("Alias en el PDF"),
                 "correo": st.column_config.TextColumn("Correo"),
@@ -2276,17 +1814,12 @@ elif menu_seleccionado == "Configuración":
             nuevos = {}
             for r in df_editado.to_dict("records"):
                 nombre = _texto(r.get("Nombre"))
-                if not nombre:
-                    continue
+                if not nombre: continue
                 mod = normalizar_modalidad(r.get("mod"))
                 rol = normalizar_rol(r.get("rol"))
                 sueldo = _a_numero(r.get("sueldo_base_neto"))
-                nuevos[nombre] = {"rol": rol, "alias": _texto(r.get("alias")), "mod": mod,
-                                  "porc": _a_porcentaje(r.get("porc"), 20.0 if mod == MOD_PORCENTAJE else 0.0),
-                                  "sueldo_base_neto": sueldo if sueldo is not None else sueldo_neto_por_defecto(rol),
-                                  "correo": _texto(r.get("correo")), "dui": _texto(r.get("dui")), "cuenta": _texto(r.get("cuenta"))}
-            if not nuevos:
-                st.error("Debe existir al menos un colaborador con nombre.")
+                nuevos[nombre] = {"rol": rol, "alias": _texto(r.get("alias")), "mod": mod, "porc": _a_porcentaje(r.get("porc"), 20.0 if mod == MOD_PORCENTAJE else 0.0), "sueldo_base_neto": sueldo if sueldo is not None else sueldo_neto_por_defecto(rol), "correo": _texto(r.get("correo")), "dui": _texto(r.get("dui")), "cuenta": _texto(r.get("cuenta"))}
+            if not nuevos: st.error("Debe existir al menos un colaborador con nombre.")
             else:
                 anteriores = ss["empleados"]
                 ss["empleados"] = nuevos
@@ -2295,17 +1828,13 @@ elif menu_seleccionado == "Configuración":
                     ss[f"email_{emp}"] = info["correo"]
                     ss.pop(f"ui_e_{emp}", None)
                     previo = anteriores.get(emp)
-                    if (previo is None or previo.get("rol") != info["rol"] or previo.get("mod") != info["mod"]
-                            or sueldo_neto_de(previo) != info["sueldo_base_neto"]):
-                        ss[f"base_{emp}"] = 0.0 if "Porcentaje" in info["mod"] else calcular_bruto_acumulado(info)
+                    if (previo is None or previo.get("rol") != info["rol"] or previo.get("mod") != info["mod"] or sueldo_neto_de(previo) != info["sueldo_base_neto"]):
+                        ss[f"base_net_{emp}"] = 0.0 if "Porcentaje" in info["mod"] else (sueldo_neto_de(info) * ss["quincenas_multiplicador"])
                 reiniciar_widgets_planilla()
-                if ss.get("pdf_bytes"):
-                    ejecutar_procesamiento()  # alias, modalidades y sueldos nuevos se aplican al reporte cargado
-                ss["nonce_editor_personal"] += 1  # el editor se recarga con los datos guardados
-                if guardar_empleados(nuevos):
-                    notificar("Personal y sueldos actualizados. Planilla recalculada.", "✅")
-                else:
-                    notificar_error("No se pudo sincronizar con Google Sheets. Los cambios de personal quedaron solo en esta sesión.")
+                if ss.get("pdf_bytes"): ejecutar_procesamiento()
+                ss["nonce_editor_personal"] += 1
+                if guardar_empleados(nuevos): notificar("Personal y sueldos actualizados. Planilla recalculada.", "✅")
+                else: notificar_error("No se pudo sincronizar con Google Sheets. Los cambios de personal quedaron solo en esta sesión.")
                 st.rerun()
 
     with tab_conexion:
@@ -2313,10 +1842,8 @@ elif menu_seleccionado == "Configuración":
             conectado = _documento() is not None
             ss["sheets_ok"] = conectado
             fuente = html.escape(ss.get("fuente_personal", "—"))
-            if conectado:
-                md("<div class='chips'>" + chip("✅ Conectado a Google Sheets", "green") + chip(f"Personal cargado desde: {fuente}", "indigo") + "</div>")
-            else:
-                st.warning("⚠️ **MODO LOCAL ACTIVADO:** no se detectan credenciales de Google Cloud o no hay conexión. Los cambios no se guardan en la nube.")
+            if conectado: md("<div class='chips'>" + chip("✅ Conectado a Google Sheets", "green") + chip(f"Personal cargado desde: {fuente}", "indigo") + "</div>")
+            else: st.warning("⚠️ **MODO LOCAL ACTIVADO:** no se detectan credenciales de Google Cloud o no hay conexión. Los cambios no se guardan en la nube.")
             k1, k2 = st.columns(2)
             if k1.button("🔌 Reintentar conexión", **ancho(st.button)):
                 _abrir_documento.clear()
@@ -2327,7 +1854,6 @@ elif menu_seleccionado == "Configuración":
                 ss["empleados"], ss["fuente_personal"] = cargar_empleados()
                 ss["proveedores"] = cargar_proveedores()
                 inicializar_empleados()
-                if ss.get("pdf_bytes"):
-                    ejecutar_procesamiento()
+                if ss.get("pdf_bytes"): ejecutar_procesamiento()
                 notificar(f"Datos recargados ({ss['fuente_personal']}).", "☁️")
                 st.rerun()
