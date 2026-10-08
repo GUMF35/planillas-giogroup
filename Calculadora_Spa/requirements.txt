@@ -1,9 +1,9 @@
-streamlit
+streamlit>=1.39
 pandas
 pdfplumber
 fpdf2
 Pillow
 streamlit-option-menu
-openpyxl
 gspread
 google-auth
+plotly>=5.19
