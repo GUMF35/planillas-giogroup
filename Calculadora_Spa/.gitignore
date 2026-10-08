@@ -1,0 +1,4 @@
+# Claves y contraseñas: nunca deben subirse a GitHub
+.streamlit/secrets.toml
+*.json
+__pycache__/
