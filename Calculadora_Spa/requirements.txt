@@ -3,7 +3,6 @@ pandas
 pdfplumber
 fpdf2
 Pillow
-streamlit-option-menu
 gspread>=5.12
 google-auth
 plotly>=5.19
