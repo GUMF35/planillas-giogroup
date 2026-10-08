@@ -93,7 +93,7 @@ def _escribir_hoja(nombre_hoja, datos_list):
         return False
 
 
-# --- CARGA Y GUARDADO DE DATOS (EMPLEADOS, INVENTARIO, PROVEEDORES) ---
+# --- CARGA Y GUARDADO DE DATOS (EMPLEADOS, PROVEEDORES) ---
 def cargar_empleados():
     worksheet = conectar_gsheets("Personal")
     if worksheet:
@@ -138,24 +138,6 @@ def guardar_empleados(datos):
         return True
     except Exception:
         return False
-
-
-def cargar_inventario():
-    worksheet = conectar_gsheets("Inventario")
-    if worksheet:
-        try:
-            records = worksheet.get_all_records()
-            if records:
-                return records
-        except Exception:
-            pass
-    return [{"ID": "S001", "Producto": "Toxina Botulínica", "Categoría/Clínica": "Dr. Gio Molina", "Stock Disponible": 10, "Costo Unitario ($)": 150.00, "Alerta Stock Mínimo": 5}]
-
-
-def guardar_inventario(datos_list):
-    if not datos_list:
-        return False
-    return _escribir_hoja("Inventario", datos_list)
 
 
 def cargar_proveedores():
@@ -222,7 +204,6 @@ for _k, _v in DEFAULTS_GLOBALES.items():
         st.session_state[_k] = _v.copy() if isinstance(_v, (list, dict)) else _v
 
 if "empleados" not in st.session_state: st.session_state["empleados"] = cargar_empleados()
-if "inventario" not in st.session_state: st.session_state["inventario"] = cargar_inventario()
 if "proveedores" not in st.session_state: st.session_state["proveedores"] = cargar_proveedores()
 
 
@@ -422,31 +403,46 @@ h4 { color: var(--gg-ink) !important; font-weight: 700 !important; letter-spacin
 .gg-status.off { background: rgba(245, 158, 11, .12); color: #FCD34D; border: 1px solid rgba(245, 158, 11, .25); }
 @keyframes ggFade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
-/* Ficha de proveedor estilo CRM */
-.gg-ficha { background: #FFFFFF; border: 1px solid var(--gg-border); border-radius: 14px; overflow: hidden; box-shadow: var(--gg-shadow); font-family: 'Inter', sans-serif; transition: box-shadow .22s ease, transform .22s ease; animation: ggFade .4s ease both; }
-.gg-ficha:hover { box-shadow: var(--gg-shadow-hover); transform: translateY(-2px); }
-.gg-ficha-head { padding: 18px 22px; background: linear-gradient(135deg, #032D60 0%, #0B5CAB 100%); color: #FFFFFF; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
-.gg-ficha-head .k { font-size: .68rem; letter-spacing: .14em; text-transform: uppercase; opacity: .75; font-weight: 700; }
-.gg-ficha-head .n { font-size: 1.25rem; font-weight: 800; letter-spacing: -0.01em; margin-top: 2px; }
-.gg-ficha-head .chips { display: flex; gap: 8px; flex-wrap: wrap; }
-.gg-ficha-head .chip { background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.22); padding: 5px 11px; border-radius: 999px; font-size: .76rem; font-weight: 600; }
-.gg-ficha-scroll { overflow-x: auto; }
-.gg-ficha table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px; min-width: 720px; }
-.gg-ficha td { padding: 10px 12px; border-bottom: 1px solid #EEF2F7; border-right: 1px solid #EEF2F7; vertical-align: middle; line-height: 1.35; }
-.gg-ficha td.th { font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: #FFFFFF; }
-.gg-ficha td.l1 { background: #032D60; }
-.gg-ficha td.l2 { background: #F3F6FA; color: #3E5266; border-right-color: #E3E9F1; }
-.gg-ficha td.l3 { background: #5A6E82; }
-.gg-ficha td.sec { background: #0B5CAB; text-align: center; }
-.gg-ficha td.v { background: #FFFFFF; color: #181818; font-weight: 500; }
-.gg-ficha td.v.alt { background: #F8FBFF; }
-.gg-ficha td.v.strong { font-weight: 700; color: #032D60; }
-.gg-ficha td.v.center { text-align: center; }
-.gg-ficha td.v.hl { background: #EAF5FE; color: #014486; font-weight: 700; font-variant-numeric: tabular-nums; }
-.gg-ficha td.v.top { vertical-align: top; color: #3E5266; }
-.gg-ficha a { color: #0176D3; font-weight: 600; text-decoration: none; }
-.gg-ficha a:hover { text-decoration: underline; }
-.gg-ficha .badge { display: inline-block; padding: 3px 10px; border-radius: 999px; background: #E6F4EA; color: #1B5E20; font-weight: 700; }
+/* Perfil de proveedor estilo CRM (HubSpot / Salesforce) */
+.st-key-card_prov_header { background: linear-gradient(180deg, #FFFFFF 0%, #FBFCFE 100%) !important; }
+.crm-head { display: flex; gap: 18px; align-items: center; animation: ggFade .4s ease both; }
+.crm-avatar {
+    width: 68px; height: 68px; border-radius: 18px; flex-shrink: 0;
+    background: linear-gradient(135deg, #2563EB 0%, #4F46E5 60%, #7C3AED 100%);
+    color: #FFFFFF; font-weight: 800; font-size: 1.45rem; letter-spacing: .02em;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 8px 20px rgba(79, 70, 229, 0.28);
+}
+.crm-kicker { font-size: .7rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: #94A3B8; }
+.crm-name { font-size: 1.5rem; font-weight: 800; color: #0F172A; letter-spacing: -0.02em; line-height: 1.2; margin-top: 2px; }
+.crm-desc { color: #64748B; font-size: .92rem; margin-top: 4px; }
+.crm-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.crm-chip { font-size: .74rem; font-weight: 600; padding: 4px 10px; border-radius: 999px; background: #F1F5F9; color: #334155; border: 1px solid #E2E8F0; white-space: nowrap; }
+.crm-chip.green { background: #ECFDF5; color: #047857; border-color: #A7F3D0; }
+.crm-chip.amber { background: #FFFBEB; color: #B45309; border-color: #FDE68A; }
+.crm-chip.red { background: #FEF2F2; color: #B91C1C; border-color: #FECACA; }
+.crm-chip.blue { background: #EFF6FF; color: #1D4ED8; border-color: #BFDBFE; }
+.crm-section-title {
+    display: flex; align-items: center; gap: 8px; font-size: .74rem; font-weight: 700; letter-spacing: .09em;
+    text-transform: uppercase; color: #475569; margin-bottom: 6px; padding-bottom: 10px; border-bottom: 1px solid #F1F5F9;
+}
+.crm-section-title .dot { width: 8px; height: 8px; border-radius: 50%; background: #2563EB; box-shadow: 0 0 0 3px rgba(37, 99, 235, .15); }
+.crm-field { display: flex; gap: 12px; align-items: flex-start; padding: 9px 0; }
+.crm-ico { width: 36px; height: 36px; border-radius: 10px; background: #F1F5F9; display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0; transition: background .2s ease, transform .2s ease; }
+.crm-field:hover .crm-ico { background: #E0E7FF; transform: scale(1.06); }
+.crm-label { font-size: .68rem; color: #94A3B8; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+.crm-value { font-size: .92rem; color: #0F172A; font-weight: 600; word-break: break-word; margin-top: 1px; }
+.crm-value.mono { font-variant-numeric: tabular-nums; letter-spacing: .02em; }
+.crm-value.empty { color: #CBD5E1; font-weight: 500; font-style: italic; }
+.crm-value a { color: #2563EB; text-decoration: none; }
+.crm-value a:hover { text-decoration: underline; }
+.crm-date { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px dashed #EEF2F7; }
+.crm-date:last-child { border-bottom: none; }
+.crm-date .l { display: flex; align-items: center; gap: 10px; font-size: .86rem; color: #334155; font-weight: 500; }
+.crm-date .r { display: flex; align-items: center; gap: 8px; font-size: .86rem; color: #0F172A; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.crm-date .r.empty { color: #CBD5E1; font-weight: 500; font-style: italic; }
+.crm-text { color: #334155; font-size: .92rem; line-height: 1.6; white-space: pre-wrap; }
+.crm-text.empty { color: #CBD5E1; font-style: italic; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -473,8 +469,8 @@ with st.sidebar:
 
     menu_seleccionado = option_menu(
         menu_title="MÓDULOS DEL SISTEMA",
-        options=["Dashboard", "Planillas", "Inventario y Proveedores", "Memorándums", "Amonestaciones", "Auditoría", "Configuración"],
-        icons=["grid-1x2-fill", "wallet-fill", "box-seam-fill", "envelope-paper-fill", "shield-fill-exclamation", "clock-fill", "gear-fill"],
+        options=["Dashboard", "Planillas", "Directorio de Proveedores", "Memorándums", "Amonestaciones", "Auditoría", "Configuración"],
+        icons=["grid-1x2-fill", "wallet-fill", "journal-bookmark-fill", "envelope-paper-fill", "shield-fill-exclamation", "clock-fill", "gear-fill"],
         menu_icon="cast", default_index=1, key="menu_principal",
         styles={
             "container": {"background-color": "transparent", "padding": "4px"},
@@ -677,14 +673,15 @@ def grafico_barras_marcas(ingresos_marca, extras_marca):
         filas.append({"Marca": m, "Concepto": "Ingresos", "Monto": float(ingresos_marca.get(m, 0.0))})
         filas.append({"Marca": m, "Concepto": "Extras (> $60)", "Monto": float(extras_marca.get(m, 0.0))})
     df = pd.DataFrame(filas)
-    fig = px.bar(df, x="Marca", y="Monto", color="Concepto", barmode="group",
+    fig = px.bar(df, y="Marca", x="Monto", color="Concepto", barmode="group", orientation="h",
                  color_discrete_map={"Ingresos": "#2a78d6", "Extras (> $60)": "#eb6834"},
-                 category_orders={"Marca": marcas})
-    fig.update_traces(hovertemplate="<b>%{x}</b><br>%{fullData.name}: $%{y:,.2f}<extra></extra>", marker_line_width=0)
-    fig.update_layout(bargap=0.32, bargroupgap=0.08, barcornerradius=4)
-    fig.update_xaxes(title=None, showgrid=False, linecolor="#CBD5E1", tickfont=dict(color="#334155"))
-    fig.update_yaxes(title=None, gridcolor="#EEF2F7", zeroline=False, tickprefix="$", tickformat=",.0f", tickfont=dict(color="#64748B"))
-    return estilo_plotly(fig, 380)
+                 category_orders={"Marca": marcas, "Concepto": ["Ingresos", "Extras (> $60)"]})
+    fig.update_traces(hovertemplate="<b>%{y}</b><br>%{fullData.name}: $%{x:,.2f}<extra></extra>", marker_line_width=0,
+                      texttemplate="$%{x:,.0f}", textposition="outside", textfont=dict(color="#334155", size=11), cliponaxis=False)
+    fig.update_layout(bargap=0.28, bargroupgap=0.08, barcornerradius=4)
+    fig.update_yaxes(title=None, showgrid=False, autorange="reversed", tickfont=dict(color="#0F172A"))
+    fig.update_xaxes(title=None, gridcolor="#EEF2F7", zeroline=False, tickprefix="$", tickformat=",.0f", tickfont=dict(color="#64748B"))
+    return estilo_plotly(fig, max(300, 92 * len(marcas) + 80))
 
 
 def grafico_colaboradores(ventas):
@@ -752,79 +749,173 @@ def generar_recibo_pdf(e_dat, periodo_texto):
 
 
 # =====================================================================
-# 9. FICHA HTML DE PROVEEDOR (estilo CRM)
+# 9. PERFIL DE PROVEEDOR (CRM con componentes nativos)
 # =====================================================================
-def _esc(v):
+def _texto(v):
+    """Valor como texto limpio ('' si viene vacío o NaN)."""
     try:
         if v is None or pd.isna(v): return ""
     except (TypeError, ValueError):
         pass
-    return html.escape(str(v))
+    return str(v).strip()
 
 
-def _th(txt, cls="l2", attrs=""):
-    return f'<td class="th {cls}" {attrs}>{txt}</td>'
+def _esc(v):
+    return html.escape(_texto(v))
 
 
-def _td(val, cls="", attrs=""):
-    return f'<td class="v {cls}" {attrs}>{_esc(val)}</td>'
+def _iniciales(nombre):
+    partes = [p for p in re.split(r"\s+", _texto(nombre)) if p]
+    return ("".join(p[0] for p in partes[:2]) or "?").upper()
 
 
-def _td_mail(val, cls="", attrs=""):
-    correo = _esc(val)
-    contenido = f'<a href="mailto:{correo}">{correo}</a>' if correo else ""
-    return f'<td class="v {cls}" {attrs}>{contenido}</td>'
+def _parse_fecha(v):
+    t = _texto(v)
+    if not t:
+        return None
+    fecha = pd.to_datetime(t, dayfirst=not re.match(r"^\d{4}-", t), errors="coerce")
+    return None if pd.isna(fecha) else fecha
 
 
-def ficha_proveedor_html(p):
-    filas = [
-        _th("Nombre del proveedor", "l1", 'style="width:20%"') + _td(p.get('Nombre_Proveedor', ''), "strong", 'style="width:30%"')
-        + _th("Valoración general", "l1", 'style="width:20%"') + f'<td class="v center" style="width:10%"><span class="badge">{_esc(p.get("Valoracion", ""))}</span></td>'
-        + _th("ID de proveedor", "l1", 'style="width:15%"') + _td(p.get('ID_Proveedor', ''), "center strong", 'style="width:5%"'),
+def _valoracion_pct(v):
+    m = re.search(r"\d+(?:[.,]\d+)?", _texto(v))
+    if not m:
+        return None
+    return max(0.0, min(100.0, float(m.group().replace(",", "."))))
 
-        _th("Nombre del contacto") + _td(p.get('Nombre_Contacto', ''), "alt")
-        + _th("Fecha de la última revisión") + _td(p.get('Fecha_Ultima_Rev', ''))
-        + _th("Descripción del producto / servicio", "sec", 'colspan="2"'),
 
-        _th("Teléfono") + _td(p.get('Telefono_1', ''), "hl")
-        + _th("Fecha de la próxima revisión") + _td(p.get('Fecha_Prox_Rev', ''))
-        + _td(p.get('Descripcion', ''), "top", 'colspan="2" rowspan="2"'),
+def estado_contrato(p):
+    """(texto, clase de color) según la fecha de vencimiento del contrato."""
+    venc = _parse_fecha(p.get("Fecha_Vencimiento"))
+    if venc is None:
+        return ("Sin fecha de vencimiento", "")
+    dias = (venc.normalize() - pd.Timestamp.today().normalize()).days
+    if dias < 0:
+        return (f"Vencido hace {abs(dias)} días", "red")
+    if dias <= 30:
+        return (f"Vence en {dias} días", "amber")
+    return ("Contrato vigente", "green")
 
-        _th("Correo electrónico") + _td_mail(p.get('Correo', ''), "alt")
-        + _th("Fecha contrato firmado") + _td(p.get('Fecha_Contrato', '')),
 
-        _th("Nombre de banco") + _td(p.get('Banco', ''), "alt")
-        + _th("Fecha de vencimiento del contrato") + _td(p.get('Fecha_Vencimiento', ''))
-        + _th("Notas", "sec", 'colspan="2"'),
+def crm_seccion(titulo, color="#2563EB"):
+    return f"<div class='crm-section-title'><span class='dot' style='background:{color};box-shadow:0 0 0 3px {color}26'></span>{titulo}</div>"
 
-        _th("Número de cuenta") + _td(p.get('Cuenta', ''), "hl")
-        + _th("Fecha de la calificación de riesgo") + _td(p.get('Fecha_Calif_Riesgo', ''))
-        + _td(p.get('Notas', ''), "top alt", 'colspan="2" rowspan="4"'),
 
-        _th("Dirección") + _td(p.get('Direccion_1', ''), "alt")
-        + _th("Fecha de la diligencia debida") + _td(p.get('Fecha_Diligencia', '')),
+def crm_campo(icono, etiqueta, valor, tipo="texto"):
+    t = _texto(valor)
+    e = html.escape(t)
+    if not t:
+        contenido = "<div class='crm-value empty'>Sin registrar</div>"
+    elif tipo == "correo":
+        contenido = f"<div class='crm-value'><a href='mailto:{e}'>{e}</a></div>"
+    elif tipo == "telefono":
+        tel = re.sub(r"[^\d+]", "", t)
+        contenido = f"<div class='crm-value mono'><a href='tel:{tel}'>{e}</a></div>"
+    elif tipo == "mono":
+        contenido = f"<div class='crm-value mono'>{e}</div>"
+    else:
+        contenido = f"<div class='crm-value'>{e}</div>"
+    return f"<div class='crm-field'><div class='crm-ico'>{icono}</div><div><div class='crm-label'>{etiqueta}</div>{contenido}</div></div>"
 
-        _th("Dirección") + _td(p.get('Direccion_2', ''), "alt")
-        + _th("Fecha de revisión del contrato") + _td(p.get('Fecha_Rev_Contrato', '')),
 
-        _th("País") + _td(p.get('Pais', ''), "alt")
-        + _th("Fecha de aprobación") + _td(p.get('Fecha_Aprobacion', '')),
+def crm_fecha(icono, etiqueta, valor, chip=""):
+    f = _parse_fecha(valor)
+    mostrar = f.strftime("%d/%m/%Y") if f is not None else _texto(valor)
+    if mostrar:
+        derecha = f"<div class='r'>{chip}{html.escape(mostrar)}</div>"
+    else:
+        derecha = "<div class='r empty'>Pendiente</div>"
+    return f"<div class='crm-date'><div class='l'><span>{icono}</span>{etiqueta}</div>{derecha}</div>"
 
-        _th("Nombre del patrocinador", "l3") + _td(p.get('Patrocinador', ''), "strong")
-        + _th("Teléfono", "l3") + _td(p.get('Telefono_2', ''), "strong")
-        + _th("Correo electrónico", "l3") + _td_mail(p.get('Correo', '')),
-    ]
-    chips = ""
-    for etiqueta, campo in [("Valoración", "Valoracion"), ("País", "Pais"), ("ID", "ID_Proveedor")]:
-        if _esc(p.get(campo, "")):
-            chips += f'<span class="chip">{etiqueta}: {_esc(p.get(campo, ""))}</span>'
-    # HTML en una sola línea: evita que Markdown interprete la indentación como bloque de código.
-    return (
-        '<div class="gg-ficha">'
-        '<div class="gg-ficha-head"><div><div class="k">Lista de contactos de proveedores</div>'
-        f'<div class="n">{_esc(p.get("Nombre_Proveedor", ""))}</div></div><div class="chips">{chips}</div></div>'
-        '<div class="gg-ficha-scroll"><table>' + "".join(f"<tr>{f}</tr>" for f in filas) + '</table></div></div>'
-    )
+
+FECHAS_PROVEEDOR = [
+    ("📝", "Contrato firmado", "Fecha_Contrato"),
+    ("⏳", "Vencimiento del contrato", "Fecha_Vencimiento"),
+    ("🔁", "Revisión del contrato", "Fecha_Rev_Contrato"),
+    ("✅", "Aprobación", "Fecha_Aprobacion"),
+    ("🔍", "Última revisión", "Fecha_Ultima_Rev"),
+    ("📆", "Próxima revisión", "Fecha_Prox_Rev"),
+    ("🛡️", "Calificación de riesgo", "Fecha_Calif_Riesgo"),
+    ("📑", "Diligencia debida", "Fecha_Diligencia"),
+]
+
+
+def render_perfil_proveedor(p):
+    nombre = _texto(p.get("Nombre_Proveedor")) or "Proveedor sin nombre"
+    estado_txt, estado_cls = estado_contrato(p)
+
+    # --- Encabezado del perfil ---
+    with st.container(border=True, key="card_prov_header"):
+        chips = f"<span class='crm-chip {estado_cls}'>● {estado_txt}</span>"
+        if _texto(p.get("Pais")):
+            chips += f"<span class='crm-chip'>🌎 {_esc(p.get('Pais'))}</span>"
+        if _texto(p.get("ID_Proveedor")):
+            chips += f"<span class='crm-chip blue'># ID {_esc(p.get('ID_Proveedor'))}</span>"
+        desc = _esc(p.get("Descripcion")) or "Sin descripción registrada"
+        st.markdown(
+            f"<div class='crm-head'><div class='crm-avatar'>{html.escape(_iniciales(nombre))}</div>"
+            f"<div><div class='crm-kicker'>Proveedor</div><div class='crm-name'>{html.escape(nombre)}</div>"
+            f"<div class='crm-desc'>{desc}</div><div class='crm-chips'>{chips}</div></div></div>",
+            unsafe_allow_html=True,
+        )
+
+    # --- KPIs ---
+    k1, k2, k3 = st.columns(3)
+    with k1:
+        st.metric("⭐ Valoración general", _texto(p.get("Valoracion")) or "—")
+        pct = _valoracion_pct(p.get("Valoracion"))
+        if pct is not None:
+            st.progress(pct / 100.0)
+    venc = _parse_fecha(p.get("Fecha_Vencimiento"))
+    prox = _parse_fecha(p.get("Fecha_Prox_Rev"))
+    k2.metric("⏳ Vencimiento de contrato", venc.strftime("%d/%m/%Y") if venc is not None else "—")
+    k3.metric("📆 Próxima revisión", prox.strftime("%d/%m/%Y") if prox is not None else "—")
+
+    # --- Secciones ---
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        with st.container(border=True, key="card_prov_contacto"):
+            st.markdown(
+                crm_seccion("Información de contacto", "#2563EB")
+                + crm_campo("👤", "Contacto", p.get("Nombre_Contacto"))
+                + crm_campo("📞", "Teléfono", p.get("Telefono_1"), "telefono")
+                + crm_campo("📧", "Correo electrónico", p.get("Correo"), "correo")
+                + crm_campo("📍", "Dirección", p.get("Direccion_1"))
+                + crm_campo("🏙️", "Ciudad / Dirección 2", p.get("Direccion_2"))
+                + crm_campo("🌎", "País", p.get("Pais")),
+                unsafe_allow_html=True,
+            )
+    with c2:
+        with st.container(border=True, key="card_prov_finanzas"):
+            st.markdown(
+                crm_seccion("Datos financieros", "#059669")
+                + crm_campo("🏦", "Banco", p.get("Banco"))
+                + crm_campo("💳", "Número de cuenta", p.get("Cuenta"), "mono")
+                + crm_campo("🤝", "Patrocinador", p.get("Patrocinador"))
+                + crm_campo("☎️", "Teléfono del patrocinador", p.get("Telefono_2"), "telefono"),
+                unsafe_allow_html=True,
+            )
+            if _texto(p.get("Cuenta")):
+                st.caption("Copiar número de cuenta")
+                st.code(_texto(p.get("Cuenta")), language=None)
+    with c3:
+        with st.container(border=True, key="card_prov_fechas"):
+            hoy = pd.Timestamp.today().normalize()
+            filas = ""
+            for icono, etiqueta, campo in FECHAS_PROVEEDOR:
+                chip = ""
+                if campo == "Fecha_Vencimiento" and estado_cls:
+                    chip = f"<span class='crm-chip {estado_cls}'>{'Vencido' if estado_cls == 'red' else 'Por vencer' if estado_cls == 'amber' else 'Vigente'}</span>"
+                elif campo == "Fecha_Prox_Rev" and prox is not None and prox.normalize() < hoy:
+                    chip = "<span class='crm-chip red'>Atrasada</span>"
+                filas += crm_fecha(icono, etiqueta, p.get(campo), chip)
+            st.markdown(crm_seccion("Contratos y auditoría", "#7C3AED") + filas, unsafe_allow_html=True)
+
+    # --- Notas ---
+    with st.container(border=True, key="card_prov_notas"):
+        notas = _esc(p.get("Notas"))
+        cuerpo = f"<div class='crm-text'>{notas}</div>" if notas else "<div class='crm-text empty'>Sin notas registradas para este proveedor.</div>"
+        st.markdown(crm_seccion("Notas internas", "#F59E0B") + cuerpo, unsafe_allow_html=True)
 
 
 # =====================================================================
@@ -953,66 +1044,47 @@ elif menu_seleccionado == "Planillas":
                             st.toast(f"¡Comprobante enviado exitosamente por Gmail a {destinatario}!", icon="📨")
                             st.balloons()
                         except Exception as ex:
-                            st.toast(f"Error al enviar correo. Verifique secretos EMAIL_USER y EMAIL_PASS: {ex}", icon="🚨")
+                            # Acción crítica: el error queda fijo en pantalla.
+                            st.error(f"Error al enviar correo. Verifique secretos EMAIL_USER y EMAIL_PASS: {ex}")
 
-# --- MÓDULO: INVENTARIO Y PROVEEDORES ---
-elif menu_seleccionado == "Inventario y Proveedores":
-    encabezado("📦 Gestión de Inventario y Proveedores", "Directorio de proveedores y control de existencias sincronizados con la nube.")
-    tab1, tab2 = st.tabs(["🤝 Directorio de Proveedores", "📦 Control de Inventario"])
+# --- MÓDULO: DIRECTORIO DE PROVEEDORES ---
+elif menu_seleccionado == "Directorio de Proveedores":
+    encabezado("📇 Directorio de Proveedores", "Perfil 360° de cada proveedor: contacto, datos financieros y control de contratos.")
+    proveedores = st.session_state["proveedores"]
+    nombres_provs = [p.get("Nombre_Proveedor", f"Prov {p.get('ID_Proveedor', '')}") for p in proveedores]
 
-    with tab2:  # INVENTARIO
-        df_inv = pd.DataFrame(st.session_state["inventario"])
-        try:
-            stock = pd.to_numeric(df_inv.get("Stock Disponible"), errors="coerce").fillna(0)
-            costo = pd.to_numeric(df_inv.get("Costo Unitario ($)"), errors="coerce").fillna(0)
-            minimo = pd.to_numeric(df_inv.get("Alerta Stock Mínimo"), errors="coerce").fillna(0)
-            i1, i2, i3 = st.columns(3)
-            i1.metric("🧴 Productos", f"{len(df_inv)}")
-            i2.metric("💵 Valor en Inventario", f"${float((stock * costo).sum()):,.2f}")
-            i3.metric("🔔 Bajo Stock Mínimo", f"{int((stock <= minimo).sum())}")
-        except Exception:
-            pass
-        st.caption("Actualiza las cantidades y costos del inventario general de las clínicas.")
-        df_inv_edited = st.data_editor(df_inv, use_container_width=True, num_rows="dynamic", key="editor_inventario")
-        if st.button("💾 Guardar Inventario en la Nube"):
-            registros = _registros_validos(df_inv_edited.to_dict("records"))
+    col_sel, col_info = st.columns([2.2, 1])
+    with col_sel:
+        prov_seleccionado = st.selectbox("🔎 Buscar proveedor", nombres_provs, key="prov_seleccionado", placeholder="Escribe para buscar...")
+    with col_info:
+        alertas = sum(1 for p in proveedores if estado_contrato(p)[1] in ("red", "amber"))
+        pills = f"<span class='gg-pill'>📇 {len(proveedores)} proveedores</span>"
+        if alertas:
+            pills += f"<span class='crm-chip amber' style='padding:7px 12px;font-size:.82rem'>⚠️ {alertas} contrato(s) por atender</span>"
+        st.markdown(f"<div style='height:28px'></div><div class='gg-row'>{pills}</div>", unsafe_allow_html=True)
+
+    if prov_seleccionado:
+        p_data = next((p for p in proveedores if p.get("Nombre_Proveedor") == prov_seleccionado), {})
+        render_perfil_proveedor(p_data)
+    else:
+        estado_vacio("📇", "No hay proveedores registrados", "Agrega el primero desde el editor de abajo.")
+
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+    with st.expander("✏️ Agregar / Editar Proveedores (Base de Datos)"):
+        df_prov = pd.DataFrame(proveedores)
+        df_prov_edited = st.data_editor(df_prov, use_container_width=True, num_rows="dynamic", key="editor_proveedores")
+        if st.button("💾 Guardar Cambios de Proveedores"):
+            registros = _registros_validos(df_prov_edited.to_dict("records"))
             if not registros:
-                st.toast("El inventario está vacío; no se guardó nada.", icon="⚠️")
+                st.toast("La lista de proveedores está vacía; no se guardó nada.", icon="⚠️")
             else:
-                st.session_state["inventario"] = registros
-                if guardar_inventario(st.session_state["inventario"]):
-                    st.toast("Inventario actualizado correctamente.", icon="✅")
+                st.session_state["proveedores"] = registros
+                if guardar_proveedores(st.session_state["proveedores"]):
+                    notificar("Base de proveedores actualizada.", "✅")
+                    st.rerun()
                 else:
-                    st.toast("Inventario actualizado en la sesión (no se pudo sincronizar con Google Sheets).", icon="⚠️")
-
-    with tab1:  # PROVEEDORES
-        col_lista, col_vista = st.columns([1, 2.2])
-        nombres_provs = [p.get("Nombre_Proveedor", f"Prov {p.get('ID_Proveedor', '')}") for p in st.session_state["proveedores"]]
-
-        with col_lista:
-            with st.container(border=True, key="card_sel_proveedor"):
-                st.markdown("<div class='gg-card-title'>Selección de Proveedor</div><div class='gg-card-sub'>Consulta la ficha completa</div>", unsafe_allow_html=True)
-                prov_seleccionado = st.selectbox("Elige un proveedor para ver su ficha:", nombres_provs, key="prov_seleccionado")
-
-            with st.expander("➕ Agregar / Editar Proveedores (Base de Datos)"):
-                df_prov = pd.DataFrame(st.session_state["proveedores"])
-                df_prov_edited = st.data_editor(df_prov, use_container_width=True, num_rows="dynamic", key="editor_proveedores")
-                if st.button("💾 Guardar Cambios de Proveedores"):
-                    registros = _registros_validos(df_prov_edited.to_dict("records"))
-                    if not registros:
-                        st.toast("La lista de proveedores está vacía; no se guardó nada.", icon="⚠️")
-                    else:
-                        st.session_state["proveedores"] = registros
-                        if guardar_proveedores(st.session_state["proveedores"]):
-                            notificar("Base de proveedores actualizada.", "✅")
-                        else:
-                            notificar("Proveedores actualizados en la sesión (no se pudo sincronizar con Google Sheets).", "⚠️")
-                        st.rerun()
-
-        with col_vista:
-            if prov_seleccionado:
-                p_data = next((p for p in st.session_state["proveedores"] if p.get("Nombre_Proveedor") == prov_seleccionado), {})
-                st.markdown(ficha_proveedor_html(p_data), unsafe_allow_html=True)
+                    # Acción crítica: el aviso queda fijo en pantalla.
+                    st.error("No se pudo sincronizar con Google Sheets. Los cambios quedaron solo en esta sesión.")
 
 
 elif menu_seleccionado == "Memorándums":
@@ -1096,4 +1168,4 @@ elif menu_seleccionado == "Configuración":
         if guardar_empleados(st.session_state["empleados"]):
             st.toast("¡Base de personal actualizada!", icon="✅")
         else:
-            st.toast("Personal actualizado en la sesión (no se pudo sincronizar con Google Sheets).", icon="⚠️")
+            st.error("No se pudo sincronizar con Google Sheets. Los cambios de personal quedaron solo en esta sesión.")
