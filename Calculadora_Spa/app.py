@@ -37,6 +37,8 @@ MOD_PORCENTAJE = "Porcentaje Directo (%)"
 MOD_FIJO = "Fijo"
 MODALIDADES = [MOD_ESTANDAR, MOD_PORCENTAJE, MOD_FIJO]
 ROLES = ["Operativo", "Administrativo"]
+# Solo se usa para rellenar un sueldo que venga vacío en Google Sheets; cada persona tiene el suyo.
+SUELDO_NETO_POR_DEFECTO = {"Operativo": 183.96, "Administrativo": 300.00}
 
 DIAS = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
 MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
@@ -325,14 +327,29 @@ def _escribir_hoja(nombre_hoja, filas):
 
 
 EMPLEADOS_POR_DEFECTO = {
-    "Maydely Hernández": {"rol": "Operativo", "alias": "MAYDELY", "mod": MOD_ESTANDAR, "porc": 20, "correo": "", "dui": "", "cuenta": ""},
-    "Luis Violante": {"rol": "Operativo", "alias": "LUIS", "mod": MOD_ESTANDAR, "porc": 20, "correo": "", "dui": "", "cuenta": ""},
-    "Jessica Lemus": {"rol": "Operativo", "alias": "JESSICA", "mod": MOD_PORCENTAJE, "porc": 20, "correo": "", "dui": "", "cuenta": ""},
-    "Mario de Paz": {"rol": "Operativo", "alias": "MARIO", "mod": MOD_ESTANDAR, "porc": 20, "correo": "", "dui": "", "cuenta": ""},
-    "Dr. Gio Molina": {"rol": "Administrativo", "alias": "GIO|MARVIN|DOCTOR", "mod": MOD_FIJO, "porc": 0, "correo": "", "dui": "", "cuenta": ""},
-    "Gerson Ulises Molina Flores": {"rol": "Administrativo", "alias": "GERSON", "mod": MOD_FIJO, "porc": 0, "correo": "", "dui": "", "cuenta": ""},
-    "Edwin Ponce": {"rol": "Administrativo", "alias": "EDWIN", "mod": MOD_FIJO, "porc": 0, "correo": "", "dui": "", "cuenta": ""},
+    "Maydely Hernández": {"rol": "Operativo", "alias": "MAYDELY", "mod": MOD_ESTANDAR, "porc": 20, "sueldo_base_neto": 183.96, "correo": "", "dui": "", "cuenta": ""},
+    "Luis Violante": {"rol": "Operativo", "alias": "LUIS", "mod": MOD_ESTANDAR, "porc": 20, "sueldo_base_neto": 183.96, "correo": "", "dui": "", "cuenta": ""},
+    "Jessica Lemus": {"rol": "Operativo", "alias": "JESSICA", "mod": MOD_PORCENTAJE, "porc": 20, "sueldo_base_neto": 0.0, "correo": "", "dui": "", "cuenta": ""},
+    "Mario de Paz": {"rol": "Operativo", "alias": "MARIO", "mod": MOD_ESTANDAR, "porc": 20, "sueldo_base_neto": 183.96, "correo": "", "dui": "", "cuenta": ""},
+    "Dr. Gio Molina": {"rol": "Administrativo", "alias": "GIO|MARVIN|DOCTOR", "mod": MOD_FIJO, "porc": 0, "sueldo_base_neto": 300.00, "correo": "", "dui": "", "cuenta": ""},
+    "Gerson Ulises Molina Flores": {"rol": "Administrativo", "alias": "GERSON", "mod": MOD_FIJO, "porc": 0, "sueldo_base_neto": 300.00, "correo": "", "dui": "", "cuenta": ""},
+    "Edwin Ponce": {"rol": "Administrativo", "alias": "EDWIN", "mod": MOD_FIJO, "porc": 0, "sueldo_base_neto": 300.00, "correo": "", "dui": "", "cuenta": ""},
 }
+
+
+def sueldo_neto_por_defecto(rol):
+    return SUELDO_NETO_POR_DEFECTO.get(rol, SUELDO_NETO_POR_DEFECTO["Administrativo"])
+
+
+def _leer_sueldo_neto(registro, rol):
+    """Busca la columna de sueldo en la fila de Sheets (Sueldo_Base_Neto, 'Sueldo base neto', 'Salario'...)."""
+    for clave, valor in registro.items():
+        n = _normalizar(clave)
+        if "SUELDO" in n or "SALARIO" in n:
+            numero = _a_numero(valor)
+            if numero is not None:
+                return numero
+    return sueldo_neto_por_defecto(rol)
 
 
 def cargar_empleados():
@@ -346,11 +363,13 @@ def cargar_empleados():
                 if not nombre:
                     continue
                 mod = normalizar_modalidad(r.get("Modalidad", "Fijo"))
+                rol = normalizar_rol(r.get("Rol", "Operativo"))
                 emp_dict[nombre] = {
-                    "rol": normalizar_rol(r.get("Rol", "Operativo")),
+                    "rol": rol,
                     "alias": _texto(r.get("Alias", "")),
                     "mod": mod,
                     "porc": _a_porcentaje(r.get("Porcentaje", 0), 20.0 if mod == MOD_PORCENTAJE else 0.0),
+                    "sueldo_base_neto": _leer_sueldo_neto(r, rol),
                     "correo": _texto(r.get("Correo", "")),
                     "dui": _texto(r.get("DUI", "")),
                     "cuenta": _texto(r.get("Cuenta", "")),
@@ -365,9 +384,9 @@ def cargar_empleados():
 def guardar_empleados(datos):
     if not datos:
         return False
-    filas = [["Nombre", "Rol", "Alias", "Modalidad", "Porcentaje", "Correo", "DUI", "Cuenta"]]
+    filas = [["Nombre", "Rol", "Alias", "Modalidad", "Porcentaje", "Sueldo_Base_Neto", "Correo", "DUI", "Cuenta"]]
     for nombre, info in datos.items():
-        filas.append([_valor_para_sheets(x) for x in [nombre, info.get("rol", ""), info.get("alias", ""), info.get("mod", ""), info.get("porc", 0), info.get("correo", ""), info.get("dui", ""), info.get("cuenta", "")]])
+        filas.append([_valor_para_sheets(x) for x in [nombre, info.get("rol", ""), info.get("alias", ""), info.get("mod", ""), info.get("porc", 0), sueldo_neto_de(info), info.get("correo", ""), info.get("dui", ""), info.get("cuenta", "")]])
     return _escribir_hoja("Personal", filas)
 
 
@@ -394,10 +413,11 @@ def cargar_proveedores():
     return [dict(PROVEEDOR_EJEMPLO)]
 
 
-def guardar_proveedores(datos_list):
+def guardar_proveedores(datos_list, encabezados_si_vacio=None):
     datos_list = _registros_validos(datos_list)
     if not datos_list:
-        return False
+        # Solo al eliminar el último proveedor: la hoja queda con los encabezados, sin filas
+        return _escribir_hoja("Proveedores", [list(encabezados_si_vacio)]) if encabezados_si_vacio else False
     encabezados = list(datos_list[0].keys())
     filas = [encabezados] + [[_valor_para_sheets(item.get(c, "")) for c in encabezados] for item in datos_list]
     return _escribir_hoja("Proveedores", filas)
@@ -420,8 +440,6 @@ except Exception:
 # 4. ESTADO DE MEMORIA (se inicializa una sola vez; nunca se pisa al navegar)
 # =====================================================================
 DEFAULTS_GLOBALES = {
-    "salario_operativo_neto": 183.96,
-    "salario_directivo_neto": 300.00,
     "quincenas_multiplicador": 1.0,
     "periodo_texto": "1 Quincena (Por defecto)",
     "detalle_extras": [],
@@ -437,8 +455,12 @@ DEFAULTS_GLOBALES = {
     "pdf_meta": {},
     "reporte_df": None,
     "resumen_pdf": {},
+    "indices_por_colab": {},
     "uploader_nonce": 0,
+    "nonce_editor_prov": 0,
+    "nonce_editor_personal": 0,
     "_toasts": [],
+    "_errores": [],
 }
 for _k, _v in DEFAULTS_GLOBALES.items():
     if _k not in st.session_state:
@@ -450,8 +472,14 @@ if "proveedores" not in st.session_state:
     st.session_state["proveedores"] = cargar_proveedores()
 
 
-def calcular_bruto_acumulado(rol, quincenas=None):
-    neto_quincenal = st.session_state["salario_operativo_neto"] if rol == "Operativo" else st.session_state["salario_directivo_neto"]
+def sueldo_neto_de(info):
+    """Sueldo neto quincenal individual de la persona (columna sueldo_base_neto de Configuración → Personal)."""
+    n = _a_numero(info.get("sueldo_base_neto"))
+    return n if n is not None else sueldo_neto_por_defecto(info.get("rol", "Operativo"))
+
+
+def calcular_bruto_acumulado(info, quincenas=None):
+    neto_quincenal = sueldo_neto_de(info)
     mult = quincenas if quincenas is not None else st.session_state["quincenas_multiplicador"]
     return round((neto_quincenal * mult) / 0.90, 2)
 
@@ -467,7 +495,7 @@ def inicializar_empleados():
         if f"notas_{emp}" not in ss:
             ss[f"notas_{emp}"] = "Ninguno"
         if f"base_{emp}" not in ss:
-            ss[f"base_{emp}"] = 0.0 if "Porcentaje" in info.get("mod", "Fijo") else calcular_bruto_acumulado(info.get("rol", "Operativo"))
+            ss[f"base_{emp}"] = 0.0 if "Porcentaje" in info.get("mod", "Fijo") else calcular_bruto_acumulado(info)
 
 
 inicializar_empleados()
@@ -475,7 +503,7 @@ inicializar_empleados()
 
 def recalcular_bases():
     for emp, info in st.session_state["empleados"].items():
-        st.session_state[f"base_{emp}"] = 0.0 if "Porcentaje" in info.get("mod", "Fijo") else calcular_bruto_acumulado(info.get("rol", "Operativo"))
+        st.session_state[f"base_{emp}"] = 0.0 if "Porcentaje" in info.get("mod", "Fijo") else calcular_bruto_acumulado(info)
 
 
 # --- Notificaciones flotantes (sobreviven a st.rerun) ---
@@ -483,11 +511,20 @@ def notificar(msg, icon="✅"):
     st.session_state["_toasts"].append((msg, icon))
 
 
+def notificar_error(msg):
+    """Errores críticos: se muestran fijos en pantalla (no como toast) aunque haya un rerun."""
+    st.session_state["_errores"].append(msg)
+
+
 def mostrar_notificaciones():
     pendientes = st.session_state.get("_toasts", [])
     st.session_state["_toasts"] = []
     for msg, icon in pendientes:
         st.toast(msg, icon=icon)
+    errores = st.session_state.get("_errores", [])
+    st.session_state["_errores"] = []
+    for msg in errores:
+        st.error(msg)
 
 
 # --- Widgets persistentes: el valor canónico vive en session_state y el widget se re-siembra al volver ---
@@ -685,6 +722,17 @@ h1, h2, h3, h4 { color: var(--ink) !important; letter-spacing: -0.02em; }
 .chip.amber { background: #FFFBEB; color: #B45309; border-color: #FDE68A; }
 .chip.red { background: #FEF2F2; color: #B91C1C; border-color: #FECACA; }
 .chip.sky { background: #F0F9FF; color: #0369A1; border-color: #BAE6FD; }
+.chip.violet { background: #F5F3FF; color: #6D28D9; border-color: #DDD6FE; }
+
+/* Acciones destructivas (contenedores con key="peligro_*") */
+[class*="st-key-peligro"] .stButton button {
+    background: linear-gradient(135deg, #DC2626 0%, #EF4444 100%) !important; color: #FFFFFF !important;
+    border: none !important; box-shadow: 0 6px 16px rgba(220,38,38,.25) !important;
+}
+[class*="st-key-peligro"] .stButton button:hover {
+    color: #FFFFFF !important; filter: brightness(1.06); box-shadow: 0 10px 24px rgba(220,38,38,.34) !important;
+}
+.confirmar-borrado { background: #FEF2F2; border: 1px solid #FECACA; color: #991B1B; border-radius: 12px; padding: 12px 14px; font-size: .9rem; margin: 6px 0 8px 0; }
 
 /* Estado vacío */
 .empty { display: flex; align-items: center; gap: 30px; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 28px 34px; box-shadow: var(--shadow-sm); animation: fadeUp .45s ease both; }
@@ -790,6 +838,14 @@ def tarjeta(nombre):
         return st.container(key=f"card_{nombre}")
     except TypeError:  # Streamlit antiguo sin 'key' en contenedores
         return st.container(border=True)
+
+
+def zona(clave):
+    """Contenedor sin estilo propio, solo para aplicar CSS por key (p. ej. botones rojos 'peligro_*')."""
+    try:
+        return st.container(key=clave)
+    except TypeError:
+        return st.container()
 
 
 def encabezado_pagina(icono, titulo, subtitulo="", kicker="Gio Group · Gerencia"):
@@ -1083,18 +1139,21 @@ def aplicar_reporte(rep, quincenas_manual=None):
     df_reporte["_N_COINC"] = 0
     lista_ex = []
     resumen = {}
+    indices_por_colab = {}
     for emp, info in ss["empleados"].items():
         mod = info.get("mod", "Fijo")
         ss[f"com_{emp}"] = 0.0
         ss[f"extra_bruto_{emp}"] = 0.0
         ss[f"ret_pub_{emp}"] = 0.0
-        ss[f"base_{emp}"] = 0.0 if "Porcentaje" in mod else calcular_bruto_acumulado(info.get("rol", ""), ss["quincenas_multiplicador"])
+        ss[f"base_{emp}"] = 0.0 if "Porcentaje" in mod else calcular_bruto_acumulado(info, ss["quincenas_multiplicador"])
 
         patron = patron_alias(alias_efectivo(emp, info))
         mascara = df_reporte["_PROF_N"].map(lambda n: coincide_alias(n, patron)).astype(bool)
         df_reporte.loc[mascara, "_N_COINC"] += 1
         df_reporte.loc[mascara & (df_reporte["_COLAB"] == ""), "_COLAB"] = emp
         df_p = df_reporte[mascara]
+        # Posiciones (en reporte_df) de los servicios de esta persona: exactamente las filas que suman a su pago
+        indices_por_colab[emp] = [i for i, m in enumerate(mascara.tolist()) if m]
         tot_s = float(df_p[c_pre].sum())
         ss[f"serv_tot_{emp}"] = tot_s
 
@@ -1117,6 +1176,7 @@ def aplicar_reporte(rep, quincenas_manual=None):
 
     ss["detalle_extras"] = lista_ex
     ss["resumen_pdf"] = resumen
+    ss["indices_por_colab"] = indices_por_colab
 
     sin_asignar = df_reporte[df_reporte["_COLAB"] == ""]
     meta["sin_asignar"] = [
@@ -1158,6 +1218,7 @@ def _reiniciar_datos_pdf():
     ss["extras_por_marca"] = {}
     ss["reporte_df"] = None
     ss["resumen_pdf"] = {}
+    ss["indices_por_colab"] = {}
     for emp in ss["empleados"].keys():
         ss[f"com_{emp}"] = 0.0
         ss[f"extra_bruto_{emp}"] = 0.0
@@ -1234,6 +1295,30 @@ def calcular_fila_planilla(emp, info):
 
 def calcular_planilla():
     return [calcular_fila_planilla(emp, info) for emp, info in st.session_state["empleados"].items()]
+
+
+def servicios_colaborador(emp, info):
+    """Todos los servicios del PDF asignados a la persona, con el extra y la comisión de cada uno (mismas fórmulas del pago)."""
+    ss = st.session_state
+    rep = ss.get("reporte_df")
+    indices = ss.get("indices_por_colab", {}).get(emp)
+    if rep is None or not indices:
+        return None
+    d = rep.iloc[indices]
+    extra = (d["Precio"] - 60.0).clip(lower=0.0)
+    tabla = pd.DataFrame({
+        "Fecha": d["Fecha"].dt.strftime("%d/%m/%Y").fillna("—"),
+        "Cliente": d["Cliente"].replace("", "—"),
+        "Servicio": d["Servicio"].replace("", "—"),
+        "Precio": d["Precio"].astype(float),
+        "Extra generado": extra.astype(float),
+    }).reset_index(drop=True)
+    if info.get("rol", "") == "Operativo":
+        if "Estándar" in info.get("mod", ""):
+            tabla["Comisión"] = (extra - extra * 0.25).values  # extra menos 25% de retención publicitaria
+        else:
+            tabla["Comisión"] = (d["Precio"] * (float(info.get("porc", 20) or 0) / 100.0)).values
+    return tabla
 
 
 # =====================================================================
@@ -1533,8 +1618,39 @@ FECHAS_PROVEEDOR = [
 ]
 
 
-def render_perfil_proveedor(p):
+def nombre_proveedor(p):
+    return _texto(p.get("Nombre_Proveedor")) or f"Prov {_texto(p.get('ID_Proveedor'))}"
+
+
+# --- Eliminación de proveedores (callbacks: se ejecutan antes del rerun automático) ---
+def pedir_borrado_proveedor(idx, nombre):
+    st.session_state["prov_a_eliminar"] = (idx, nombre)
+
+
+def cancelar_borrado_proveedor():
+    st.session_state.pop("prov_a_eliminar", None)
+
+
+def confirmar_borrado_proveedor(idx, nombre):
+    ss = st.session_state
+    ss.pop("prov_a_eliminar", None)
+    provs = ss["proveedores"]
+    if idx >= len(provs) or nombre_proveedor(provs[idx]) != nombre:
+        notificar_error("No se pudo eliminar: la lista de proveedores cambió mientras confirmabas. Inténtalo de nuevo.")
+        return
+    encabezados = list(provs[idx].keys())
+    ss["proveedores"] = provs[:idx] + provs[idx + 1:]
+    ss.pop("prov_seleccionado", None)  # la búsqueda vuelve al primer proveedor de la lista
+    ss["nonce_editor_prov"] += 1       # la tabla de edición se recarga con la lista nueva
+    if guardar_proveedores(ss["proveedores"], encabezados_si_vacio=encabezados):
+        notificar(f"Proveedor «{nombre}» eliminado.", "🗑️")
+    else:
+        notificar_error(f"«{nombre}» se eliminó de esta sesión, pero no se pudo actualizar Google Sheets. Si recargas la app volverá a aparecer.")
+
+
+def render_perfil_proveedor(p, idx):
     nombre = _texto(p.get("Nombre_Proveedor")) or "Proveedor sin nombre"
+    clave = nombre_proveedor(p)
     estado_txt, estado_cls = estado_contrato(p)
     hoy = pd.Timestamp(ahora_sv().date())
     venc = _parse_fecha(p.get("Fecha_Vencimiento"))
@@ -1548,9 +1664,25 @@ def render_perfil_proveedor(p):
         if _texto(p.get("ID_Proveedor")):
             chips += chip(f"# ID {_esc(p.get('ID_Proveedor'))}", "indigo")
         desc = _esc(p.get("Descripcion")) or "Sin descripción registrada"
-        md(f"<div class='crm-head'><div class='crm-avatar'>{html.escape(_iniciales(nombre))}</div>"
-           f"<div><div class='crm-kicker'>Proveedor</div><div class='crm-name'>{html.escape(nombre)}</div>"
-           f"<div class='crm-desc'>{desc}</div><div class='chips' style='margin-top:10px'>{chips}</div></div></div>")
+        h1, h2 = st.columns([5, 1.35])
+        with h1:
+            md(f"<div class='crm-head'><div class='crm-avatar'>{html.escape(_iniciales(nombre))}</div>"
+               f"<div><div class='crm-kicker'>Proveedor</div><div class='crm-name'>{html.escape(nombre)}</div>"
+               f"<div class='crm-desc'>{desc}</div><div class='chips' style='margin-top:10px'>{chips}</div></div></div>")
+        with h2:
+            espacio(14)
+            with zona("peligro_eliminar"):
+                st.button("🗑️ Eliminar Proveedor", key="btn_eliminar_prov", on_click=pedir_borrado_proveedor, args=(idx, clave), **ancho(st.button))
+
+        if st.session_state.get("prov_a_eliminar") == (idx, clave):
+            md(f"<div class='confirmar-borrado'>⚠️ ¿Eliminar definitivamente a <b>{html.escape(nombre)}</b>? "
+               f"También se borrará de Google Sheets y no se puede deshacer.</div>")
+            k1, k2, _ = st.columns([1.2, 1, 3])
+            with k1:
+                with zona("peligro_confirmar"):
+                    st.button("Sí, eliminar", key="btn_confirmar_borrado", on_click=confirmar_borrado_proveedor, args=(idx, clave), **ancho(st.button))
+            with k2:
+                st.button("Cancelar", key="btn_cancelar_borrado", on_click=cancelar_borrado_proveedor, **ancho(st.button))
 
     pct = _valoracion_pct(p.get("Valoracion"))
     barra = f"<div class='bar'><span style='width:{pct:.0f}%'></span></div>" if pct is not None else "Sin calificación"
@@ -1858,12 +1990,16 @@ elif menu_seleccionado == "Planillas":
                     chips += chip(f"📣 Retención 25% {usd(ss.get(f'ret_pub_{emp}', 0))}", "sky")
             else:
                 chips = chip("Sin datos del reporte de ventas")
+            if "Porcentaje" in mod:
+                chips = chip("🪙 Sin sueldo base · gana solo su %", "violet") + chips
+            else:
+                chips = chip(f"🪙 Sueldo neto {usd(sueldo_neto_de(info))} / quincena", "violet") + chips
             md(f"<div class='chips'>{chips}</div>")
 
             c1, c2, c3 = st.columns([1.2, 1, 1])
             with c1:
                 campo_persistente(st.number_input, "Sueldo Base ($)", f"base_{emp}", f"ui_b_{emp}", conv=float, step=0.01, format="%.2f",
-                                  help="Neto quincenal ÷ 0.90 × quincenas del período. Modalidad Porcentaje: $0.")
+                                  help="Sueldo neto quincenal de la persona (Configuración → Personal) ÷ 0.90 × quincenas del período. Modalidad Porcentaje: $0.")
                 campo_persistente(st.number_input, "Comisiones ($)", f"com_{emp}", f"ui_c_{emp}", conv=float, step=0.01, format="%.2f",
                                   help="Estándar: (precio − 60) × 75% por cada servicio mayor a $60. Porcentaje: ventas × %.")
             with c2:
@@ -1877,6 +2013,23 @@ elif menu_seleccionado == "Planillas":
             md(f"<div class='neto'><div><div class='neto-label'>Neto a pagar</div>"
                f"<div class='neto-formula'>Base {usd(fila['Base'])} + Comisión {usd(fila['Com Neta'])} + Bonos {usd(fila['Bonos'])} − Renta {usd(fila['Renta'])} − Descuentos {usd(fila['Desc'])}</div></div>"
                f"<div class='neto-valor'>{usd(fila['Total'])}</div></div>")
+
+            # Historial completo de servicios del período (transparencia total del pago)
+            servicios = servicios_colaborador(emp, info)
+            espacio(6)
+            if servicios is not None and not servicios.empty:
+                md(titulo_seccion(f"🧾 Servicios del período · {len(servicios)}", "Cada servicio del PDF asignado a esta persona."))
+                cols_dinero = [c for c in ("Precio", "Extra generado", "Comisión") if c in servicios.columns]
+                resumen_serv = chip(f"Ventas {usd(servicios['Precio'].sum())}", "green") + chip(f"Extra {usd(servicios['Extra generado'].sum())}", "amber")
+                if "Comisión" in servicios.columns:
+                    resumen_serv += chip(f"Comisión {usd(servicios['Comisión'].sum())}", "indigo")
+                md(f"<div class='chips'>{resumen_serv}</div>")
+                st.dataframe(servicios.style.format("${:,.2f}", subset=cols_dinero), hide_index=True,
+                             height=min(420, 38 + 35 * len(servicios)), **ancho(st.dataframe))
+            elif ss.get("pdf_ok"):
+                md(f"<div class='chips'>{chip('No se encontraron servicios de esta persona en el reporte. Revisa su alias en Configuración.', 'amber')}</div>")
+            else:
+                md(f"<div class='chips'>{chip('Sube el reporte de ventas para ver el detalle de servicios.')}</div>")
         datos_emp.append(fila)
 
     if datos_emp:
@@ -1980,7 +2133,7 @@ elif menu_seleccionado == "Planillas":
 elif menu_seleccionado == "Directorio de Proveedores":
     encabezado_pagina("📇", "Directorio de Proveedores", "Perfil 360° de cada proveedor: contacto, datos financieros y control de contratos.")
     proveedores = ss["proveedores"]
-    nombres_provs = [_texto(p.get("Nombre_Proveedor")) or f"Prov {_texto(p.get('ID_Proveedor'))}" for p in proveedores]
+    nombres_provs = [nombre_proveedor(p) for p in proveedores]
 
     col_sel, col_info = st.columns([2.2, 1])
     with col_sel:
@@ -1995,25 +2148,27 @@ elif menu_seleccionado == "Directorio de Proveedores":
 
     if prov_seleccionado:
         idx = nombres_provs.index(prov_seleccionado)
-        render_perfil_proveedor(proveedores[idx])
+        render_perfil_proveedor(proveedores[idx], idx)
     else:
         estado_vacio(IMG_DIRECTORIO, "Aún no hay proveedores", "Agrega el primero desde el editor de abajo.")
 
     espacio(8)
-    with st.expander("✏️ Agregar / editar proveedores (base de datos)"):
-        df_prov = pd.DataFrame(proveedores)
-        df_prov_edited = st.data_editor(df_prov, num_rows="dynamic", key="editor_proveedores", **ancho(st.data_editor))
+    with st.expander("✏️ Agregar / editar proveedores (base de datos)", expanded=not proveedores):
+        df_prov = pd.DataFrame(proveedores) if proveedores else pd.DataFrame(columns=list(PROVEEDOR_EJEMPLO.keys()))
+        # El nonce reinicia el editor tras guardar o eliminar (evita filas duplicadas o ediciones aplicadas a otra fila)
+        df_prov_edited = st.data_editor(df_prov, num_rows="dynamic", key=f"editor_proveedores_{ss['nonce_editor_prov']}", **ancho(st.data_editor))
         if st.button("💾 Guardar cambios de proveedores", type="primary"):
             registros = _registros_validos(df_prov_edited.to_dict("records"))
             if not registros:
                 st.toast("La lista de proveedores está vacía; no se guardó nada.", icon="⚠️")
             else:
                 ss["proveedores"] = registros
+                ss["nonce_editor_prov"] += 1
                 if guardar_proveedores(registros):
                     notificar("Base de proveedores actualizada.", "✅")
-                    st.rerun()
                 else:
-                    st.error("No se pudo sincronizar con Google Sheets. Los cambios quedaron solo en esta sesión.")
+                    notificar_error("No se pudo sincronizar con Google Sheets. Los cambios de proveedores quedaron solo en esta sesión.")
+                st.rerun()
 
 elif menu_seleccionado == "Memorándums":
     encabezado_pagina("📝", "Memorándums internos", "Comunicaciones oficiales en PDF con la identidad de Gio Group.")
@@ -2090,22 +2245,27 @@ elif menu_seleccionado == "Auditoría":
         estado_vacio(IMG_REPORTE, "El registro está limpio", "Los recibos enviados, memorándums y actas aparecerán aquí.")
 
 elif menu_seleccionado == "Configuración":
-    encabezado_pagina("⚙️", "Configuración", "Personal, parámetros de planilla y conexión con Google Sheets.")
-    tab_personal, tab_param, tab_conexion = st.tabs(["👥 Personal", "💵 Parámetros de planilla", "☁️ Conexión"])
+    encabezado_pagina("⚙️", "Configuración", "Personal, sueldos individuales y conexión con Google Sheets.")
+    tab_personal, tab_conexion = st.tabs(["👥 Personal y sueldos", "☁️ Conexión"])
 
     with tab_personal:
-        st.caption("El **alias** es el nombre con el que la persona aparece en el PDF de ventas (varios separados con |, por ejemplo GIO|MARVIN). Si se deja vacío se usa su primer nombre.")
-        df_emp = pd.DataFrame([{"Nombre": n, "rol": i.get("rol", ""), "alias": i.get("alias", ""), "mod": i.get("mod", MOD_FIJO),
-                                "porc": float(i.get("porc", 0) or 0), "correo": i.get("correo", ""), "dui": i.get("dui", ""), "cuenta": i.get("cuenta", "")}
+        st.caption("**Sueldo base neto**: lo que recibe cada persona por quincena. El bruto se calcula como neto ÷ 0.90 × quincenas del período. "
+                   "En modalidad Porcentaje el sueldo no se usa (base en cero y sin renta). "
+                   "**Alias**: el nombre con el que la persona aparece en el PDF de ventas (varios separados con |, por ejemplo GIO|MARVIN); si se deja vacío se usa su primer nombre.")
+        df_emp = pd.DataFrame([{"Nombre": n, "rol": i.get("rol", ""), "mod": i.get("mod", MOD_FIJO),
+                                "sueldo_base_neto": float(sueldo_neto_de(i)), "porc": float(i.get("porc", 0) or 0),
+                                "alias": i.get("alias", ""), "correo": i.get("correo", ""), "dui": i.get("dui", ""), "cuenta": i.get("cuenta", "")}
                                for n, i in ss["empleados"].items()])
         df_editado = st.data_editor(
-            df_emp, num_rows="dynamic", hide_index=True, key="editor_personal",
+            df_emp, num_rows="dynamic", hide_index=True, key=f"editor_personal_{ss['nonce_editor_personal']}",
             column_config={
                 "Nombre": st.column_config.TextColumn("Nombre", required=True),
                 "rol": st.column_config.SelectboxColumn("Rol", options=ROLES, required=True),
-                "alias": st.column_config.TextColumn("Alias en el PDF"),
                 "mod": st.column_config.SelectboxColumn("Modalidad", options=MODALIDADES, required=True, width="medium"),
+                "sueldo_base_neto": st.column_config.NumberColumn("Sueldo base neto (quincenal)", min_value=0.0, step=0.01, format="$%.2f",
+                                                                  help="Neto que recibe la persona por quincena. Se ignora en modalidad Porcentaje."),
                 "porc": st.column_config.NumberColumn("% Comisión", min_value=0, max_value=100, step=1, format="%.0f"),
+                "alias": st.column_config.TextColumn("Alias en el PDF"),
                 "correo": st.column_config.TextColumn("Correo"),
                 "dui": st.column_config.TextColumn("DUI"),
                 "cuenta": st.column_config.TextColumn("Cuenta bancaria"),
@@ -2119,8 +2279,11 @@ elif menu_seleccionado == "Configuración":
                 if not nombre:
                     continue
                 mod = normalizar_modalidad(r.get("mod"))
-                nuevos[nombre] = {"rol": normalizar_rol(r.get("rol")), "alias": _texto(r.get("alias")), "mod": mod,
+                rol = normalizar_rol(r.get("rol"))
+                sueldo = _a_numero(r.get("sueldo_base_neto"))
+                nuevos[nombre] = {"rol": rol, "alias": _texto(r.get("alias")), "mod": mod,
                                   "porc": _a_porcentaje(r.get("porc"), 20.0 if mod == MOD_PORCENTAJE else 0.0),
+                                  "sueldo_base_neto": sueldo if sueldo is not None else sueldo_neto_por_defecto(rol),
                                   "correo": _texto(r.get("correo")), "dui": _texto(r.get("dui")), "cuenta": _texto(r.get("cuenta"))}
             if not nuevos:
                 st.error("Debe existir al menos un colaborador con nombre.")
@@ -2131,34 +2294,19 @@ elif menu_seleccionado == "Configuración":
                 for emp, info in nuevos.items():
                     ss[f"email_{emp}"] = info["correo"]
                     ss.pop(f"ui_e_{emp}", None)
-                    previo = anteriores.get(emp, {})
-                    if previo.get("rol") != info["rol"] or previo.get("mod") != info["mod"]:
-                        ss[f"base_{emp}"] = 0.0 if "Porcentaje" in info["mod"] else calcular_bruto_acumulado(info["rol"])
+                    previo = anteriores.get(emp)
+                    if (previo is None or previo.get("rol") != info["rol"] or previo.get("mod") != info["mod"]
+                            or sueldo_neto_de(previo) != info["sueldo_base_neto"]):
+                        ss[f"base_{emp}"] = 0.0 if "Porcentaje" in info["mod"] else calcular_bruto_acumulado(info)
                 reiniciar_widgets_planilla()
                 if ss.get("pdf_bytes"):
-                    ejecutar_procesamiento()  # alias y modalidades nuevas se aplican al reporte cargado
+                    ejecutar_procesamiento()  # alias, modalidades y sueldos nuevos se aplican al reporte cargado
+                ss["nonce_editor_personal"] += 1  # el editor se recarga con los datos guardados
                 if guardar_empleados(nuevos):
-                    st.toast("Personal actualizado y planilla recalculada.", icon="✅")
+                    notificar("Personal y sueldos actualizados. Planilla recalculada.", "✅")
                 else:
-                    st.error("No se pudo sincronizar con Google Sheets. Los cambios de personal quedaron solo en esta sesión.")
-
-    with tab_param:
-        with tarjeta("parametros"):
-            md(titulo_seccion("Salario neto por quincena", "El sueldo base bruto se calcula como neto ÷ 0.90 × quincenas del período."))
-            p1, p2 = st.columns(2)
-            nuevo_op = p1.number_input("Operativo — neto quincenal ($)", min_value=0.0, step=0.01, format="%.2f", value=float(ss["salario_operativo_neto"]), key="cfg_sal_op")
-            nuevo_dir = p2.number_input("Administrativo — neto quincenal ($)", min_value=0.0, step=0.01, format="%.2f", value=float(ss["salario_directivo_neto"]), key="cfg_sal_dir")
-            md(f"<div class='chips'>{chip(f'Operativo: bruto {usd(round(nuevo_op / 0.90, 2))} por quincena', 'indigo')}{chip(f'Administrativo: bruto {usd(round(nuevo_dir / 0.90, 2))} por quincena', 'indigo')}</div>")
-            if st.button("✅ Aplicar y recalcular planilla", type="primary"):
-                ss["salario_operativo_neto"] = float(nuevo_op)
-                ss["salario_directivo_neto"] = float(nuevo_dir)
-                if ss.get("pdf_bytes"):
-                    ejecutar_procesamiento()
-                else:
-                    recalcular_bases()
-                    reiniciar_widgets_planilla()
-                st.toast("Parámetros aplicados. Planilla recalculada.", icon="✅")
-            st.caption("Estos parámetros se mantienen durante la sesión; al reiniciar la app vuelven a los valores por defecto.")
+                    notificar_error("No se pudo sincronizar con Google Sheets. Los cambios de personal quedaron solo en esta sesión.")
+                st.rerun()
 
     with tab_conexion:
         with tarjeta("conexion"):
