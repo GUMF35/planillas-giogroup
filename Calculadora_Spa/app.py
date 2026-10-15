@@ -62,6 +62,8 @@ AJUSTES_POR_DEFECTO = {
     "retencion_pub_pct": 25.0,
     "renta_pct": 10.0,
     "logo_b64": "",
+    "autoguardado": True,      # guardar cada planilla en Google Sheets automáticamente
+    "altas_aplicadas": "",     # altas de personal ya incorporadas (para no repetirlas)
 }
 AJUSTES_NUMERICOS = ("salario_minimo", "umbral_extra", "retencion_pub_pct", "renta_pct")
 REGLAS_OFICIALES = {"umbral_extra": 60.0, "retencion_pub_pct": 25.0, "renta_pct": 10.0}
@@ -119,8 +121,9 @@ NUEVO_EMP = "➕ Nuevo colaborador"
 MODO_NETO_Q = "Neto quincenal"
 MODO_BRUTO_M = "Bruto mensual"
 
-ENCABEZADOS_HISTORIAL = ["Guardado", "Periodo", "Desde", "Hasta", "Quincenas", "Colaborador", "Forma_Pago", "Servicios",
-                         "Ventas", "Sueldo_Neto", "Comision", "Bonos", "Descuentos", "Renta", "Total"]
+ENCABEZADOS_HISTORIAL = ["Guardado", "Periodo", "Desde", "Hasta", "Quincenas", "Colaborador", "DUI", "Cargo", "Forma_Pago", "Servicios",
+                         "Ventas", "Sueldo_Bruto", "Renta", "Sueldo_Neto", "Extra_Bruto", "Pauta", "Comision", "Bonos", "Descuentos", "Total"]
+COLUMNAS_DINERO_HISTORIAL = ("Ventas", "Sueldo_Bruto", "Renta", "Sueldo_Neto", "Extra_Bruto", "Pauta", "Comision", "Bonos", "Descuentos", "Total")
 
 
 # =====================================================================
@@ -464,8 +467,18 @@ EMPLEADOS_POR_DEFECTO = {
     "Mario de Paz": {"rol": "Operativo", "alias": "MARIO", "mod": MOD_ESTANDAR, "porc": 20, "sueldo_base_neto": 183.96},
     "Dr. Gio Molina": {"rol": "Administrativo", "alias": "GIO|MARVIN|DOCTOR", "mod": MOD_FIJO, "porc": 0, "sueldo_base_neto": 300.00},
     "Gerson Ulises Molina Flores": {"rol": "Administrativo", "alias": "GERSON", "mod": MOD_FIJO, "porc": 0, "sueldo_base_neto": 300.00},
+    "Edwin Bartolo Lara Ponce": {"rol": "Administrativo", "alias": "EDWIN", "mod": MOD_FIJO, "porc": 0, "sueldo_base_neto": 300.00,
+                                 "cargo": "Vendedor", "dui": "04182355-6"},
 }
 CAMPOS_EXTRA_EMPLEADO = ("cargo", "correo", "telefono", "dui", "banco", "cuenta", "fecha_ingreso")
+
+# Altas de personal que la app incorpora una sola vez a la hoja "Personal" (si ya existe, se actualiza su ficha).
+ALTAS_PENDIENTES = [
+    {"clave": "alta_edwin_04182355-6", "nombre": "Edwin Bartolo Lara Ponce", "buscar": ("EDWIN", "PONCE"),
+     "igualar_sueldo_a": ("Gerson Ulises Molina Flores", "Dr. Gio Molina"),
+     "datos": {"rol": "Administrativo", "alias": "EDWIN", "mod": MOD_FIJO, "porc": 0, "sueldo_base_neto": 300.00,
+               "cargo": "Vendedor", "dui": "04182355-6"}},
+]
 
 
 def sueldo_neto_por_defecto(rol):
@@ -637,14 +650,23 @@ def cargar_historial_planillas():
         return None
 
 
+def es_mismo_periodo(registro, periodo, rango):
+    """Mismo texto de período o mismas fechas Desde–Hasta (así un ajuste de quincenas no duplica la planilla)."""
+    if _texto(registro.get("Periodo")) == periodo:
+        return True
+    return bool(rango[0]) and (_texto(registro.get("Desde")), _texto(registro.get("Hasta"))) == rango
+
+
 def guardar_historial_planilla(filas_nuevas, periodo):
     """Guarda la planilla del período (si el período ya existía, se reemplaza para no duplicar)."""
     worksheet = conectar_gsheets("Historial_Planillas", crear=True)
     if worksheet is None:
         return False
+    primera = filas_nuevas[0] if filas_nuevas else {}
+    rango = (_texto(primera.get("Desde")), _texto(primera.get("Hasta")))
     try:
         existentes = _leer_registros(worksheet) if worksheet.row_values(1) else []
-        conservar = [r for r in existentes if _texto(r.get("Periodo")) != periodo]
+        conservar = [r for r in existentes if not es_mismo_periodo(r, periodo, rango)]
         filas = [ENCABEZADOS_HISTORIAL]
         filas += [[_valor_para_sheets(r.get(c, "")) for c in ENCABEZADOS_HISTORIAL] for r in conservar]
         filas += [[_valor_para_sheets(f.get(c, "")) for c in ENCABEZADOS_HISTORIAL] for f in filas_nuevas]
@@ -801,6 +823,41 @@ def desglose_sueldo(neto_q):
 
 def base_neta_periodo(info):
     return 0.0 if "Porcentaje" in info.get("mod", "Fijo") else round(sueldo_neto_de(info) * st.session_state["quincenas_multiplicador"], 2)
+
+
+def aplicar_altas_pendientes():
+    """Incorpora una sola vez a la hoja «Personal» las altas de ALTAS_PENDIENTES (si luego se borra a la persona, no vuelve a aparecer)."""
+    ss = st.session_state
+    if ss.get("_altas_revisadas"):
+        return
+    ss["_altas_revisadas"] = True
+    if ss.get("fuente_personal") != "Google Sheets":
+        return  # sin hoja de personal, los datos locales ya traen a todo el personal por defecto
+    aplicadas = [c.strip() for c in _texto(aj("altas_aplicadas")).split(",") if c.strip()]
+    nuevas = []
+    for alta in ALTAS_PENDIENTES:
+        if alta["clave"] in aplicadas:
+            continue
+        datos = dict(alta["datos"])
+        for ref in alta.get("igualar_sueldo_a", ()):
+            if ref in ss["empleados"]:
+                datos["sueldo_base_neto"] = sueldo_neto_de(ss["empleados"][ref])
+                break
+        existente = next((n for n in ss["empleados"] if all(p in _normalizar(n) for p in alta["buscar"])), None)
+        if existente:
+            info = dict(ss["empleados"][existente])
+            info.update({k: v for k, v in datos.items() if k != "alias" or not _texto(info.get("alias"))})
+            ss["empleados"][existente] = _empleado_normalizado(info)
+        else:
+            ss["empleados"][alta["nombre"]] = _empleado_normalizado(datos)
+        nuevas.append(alta)
+    if nuevas and guardar_empleados(ss["empleados"]):
+        ss["ajustes"]["altas_aplicadas"] = ",".join(aplicadas + [a["clave"] for a in nuevas])
+        guardar_ajustes(ss["ajustes"])
+        ss["_toasts"].append((f"Personal actualizado en Google Sheets: {', '.join(a['nombre'] for a in nuevas)}.", "👤"))
+
+
+aplicar_altas_pendientes()
 
 
 def inicializar_empleados():
@@ -2528,6 +2585,15 @@ def actualizar_ajuste(clave, widget_key, recalcular=False):
         recalcular_todo()
 
 
+def cambiar_autoguardado():
+    ss = st.session_state
+    ss["ajustes"]["autoguardado"] = bool(ss["aj_autoguardado"])
+    ss.pop("autoguardado_firma", None)  # al encenderlo, guarda de inmediato la planilla actual
+    guardado = guardar_ajustes(ss["ajustes"])
+    estado = "encendido" if ss["ajustes"]["autoguardado"] else "apagado"
+    notificar(f"Guardado automático {estado}" + ("." if guardado else " (solo en esta sesión: sin conexión con Google Sheets)."), "⚡")
+
+
 def restaurar_reglas():
     ss = st.session_state
     for clave, valor in REGLAS_OFICIALES.items():
@@ -2800,7 +2866,7 @@ with st.sidebar:
        f"<div class='side-row'><span>Quincenas a pagar</span><b>{st.session_state['quincenas_multiplicador']:g}</b></div>"
        f"<div class='side-row'><span>Colaboradores</span><b>{len(st.session_state['empleados'])}</b></div></div>")
     md("<div class='profile'><div class='avatar'>AD</div><div><div class='profile-name'>Administración</div><div class='profile-role'>Gerencia General</div></div></div>"
-       "<div class='version'>Suite administrativa · v4</div>")
+       "<div class='version'>Suite administrativa · v4.1</div>")
 
 
 def nav_movil():
@@ -2943,14 +3009,83 @@ def panel_sincronizacion():
 
 
 def filas_historial(datos_emp):
+    """Una fila por colaborador con todo lo que se le paga en el período (lo que se guarda en «Historial_Planillas»)."""
     ss = st.session_state
     pi = ss.get("periodo_info") or {}
     guardado = ahora_sv().strftime("%Y-%m-%d %H:%M")
-    return [{"Guardado": guardado, "Periodo": ss["periodo_texto"], "Desde": pi.get("inicio", ""), "Hasta": pi.get("fin", ""),
-             "Quincenas": ss["quincenas_multiplicador"], "Colaborador": d["Colaborador"], "Forma_Pago": d["Modalidad"],
-             "Servicios": d["Servicios"], "Ventas": round(d["Ventas PDF"], 2), "Sueldo_Neto": round(d["Base Neta"], 2),
-             "Comision": round(d["Com Neta"], 2), "Bonos": round(d["Bonos"], 2), "Descuentos": round(d["Desc"], 2),
-             "Renta": round(d["Renta"], 2), "Total": round(d["Total"], 2)} for d in datos_emp]
+    filas = []
+    for d in datos_emp:
+        info = ss["empleados"].get(d["Colaborador"], {})
+        filas.append({
+            "Guardado": guardado, "Periodo": ss["periodo_texto"], "Desde": pi.get("inicio", ""), "Hasta": pi.get("fin", ""),
+            "Quincenas": float(ss["quincenas_multiplicador"]), "Colaborador": d["Colaborador"], "DUI": _texto(info.get("dui")),
+            "Cargo": _texto(info.get("cargo")) or _texto(info.get("rol")), "Forma_Pago": d["Modalidad"], "Servicios": int(d["Servicios"]),
+            "Ventas": round(float(d["Ventas PDF"]), 2), "Sueldo_Bruto": round(float(d["Base Bruta"]), 2), "Renta": round(float(d["Renta"]), 2),
+            "Sueldo_Neto": round(float(d["Base Neta"]), 2), "Extra_Bruto": round(float(d["Extra"]), 2), "Pauta": round(float(d["Ret Pub"]), 2),
+            "Comision": round(float(d["Com Neta"]), 2), "Bonos": round(float(d["Bonos"]), 2), "Descuentos": round(float(d["Desc"]), 2),
+            "Total": round(float(d["Total"]), 2),
+        })
+    return filas
+
+
+def firma_planilla(filas):
+    """Huella de la planilla sin la hora de guardado: si no cambia, no hace falta volver a guardar."""
+    sin_hora = [{k: v for k, v in f.items() if k != "Guardado"} for f in filas]
+    return hashlib.md5(json.dumps(sin_hora, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")).hexdigest()
+
+
+def guardar_planilla_actual(filas_h, automatico=False):
+    """Guarda la planilla en la sesión y en Google Sheets. Devuelve True si quedó en la nube."""
+    ss = st.session_state
+    periodo = ss["periodo_texto"]
+    rango = (_texto(filas_h[0].get("Desde")), _texto(filas_h[0].get("Hasta"))) if filas_h else ("", "")
+    ss["historial_local"] = {k: v for k, v in ss["historial_local"].items()
+                             if not (isinstance(v, list) and v and isinstance(v[0], dict) and es_mismo_periodo(dict(v[0], Periodo=k), periodo, rango))}
+    ss["historial_local"][periodo] = filas_h
+    ss.pop("hist_cache", None)
+    ok = guardar_historial_planilla(filas_h, periodo) if _documento() is not None else False
+    if ok and (not automatico or ss.get("autoguardado_periodo") != periodo):
+        registrar_auditoria("Planilla guardada automáticamente" if automatico else "Planilla guardada en historial", periodo)
+    if ok:
+        ss["autoguardado_periodo"] = periodo
+    ss["autoguardado_firma"] = firma_planilla(filas_h)
+    ss["autoguardado_estado"] = {"ok": ok, "hora": ahora_sv().strftime("%H:%M"), "periodo": periodo, "auto": automatico}
+    return ok
+
+
+def autoguardar_planilla(datos_emp=None):
+    """Con el PDF ya leído, guarda sola la planilla en Google Sheets y la vuelve a guardar cada vez que cambia algún pago."""
+    ss = st.session_state
+    if not ss.get("pdf_ok") or not aj("autoguardado"):
+        return
+    if datos_emp is None:
+        datos_emp = calcular_planilla()
+    filas_h = filas_historial(datos_emp)
+    if not filas_h or firma_planilla(filas_h) == ss.get("autoguardado_firma"):
+        return
+    primera_vez = ss.get("autoguardado_periodo") != ss["periodo_texto"]
+    if guardar_planilla_actual(filas_h, automatico=True):
+        if primera_vez:
+            st.toast("Planilla guardada automáticamente en Google Sheets (Historial_Planillas).", icon="☁️")
+    elif ss.get("sheets_ok") and ss.get("_aviso_autoguardado") != ss["periodo_texto"]:
+        ss["_aviso_autoguardado"] = ss["periodo_texto"]
+        st.toast("No se pudo guardar la planilla en Google Sheets: quedó solo en esta sesión.", icon="⚠️")
+
+
+def chip_autoguardado():
+    ss = st.session_state
+    est = ss.get("autoguardado_estado") or {}
+    if not ss.get("pdf_ok"):
+        return ""
+    if not aj("autoguardado"):
+        return chip("⏸️ Guardado automático apagado · usa «Guardar en historial»", "amber")
+    if est.get("periodo") != ss["periodo_texto"]:
+        return chip("⏳ Pendiente de guardar")
+    if est.get("ok"):
+        return chip(f"☁️ Guardada en Google Sheets · {est['hora']}", "green")
+    if not ss.get("sheets_ok"):
+        return chip("💾 Modo local: guardada solo en esta sesión", "amber")
+    return chip("⚠️ No se pudo guardar en Google Sheets · reintenta con «Guardar en historial»", "red")
 
 
 # =====================================================================
@@ -3040,6 +3175,8 @@ if pagina == "Planillas":
                 md(f"<div class='chips'>{chip('Sube el reporte de ventas para ver el detalle de servicios.')}</div>")
         datos_emp.append(fila)
 
+    autoguardar_planilla(datos_emp)  # PDF leído → todos los pagos quedan guardados en Google Sheets
+
     if datos_emp:
         with contenedor_pago:
             total_pagar = sum(d["Total"] for d in datos_emp)
@@ -3060,7 +3197,10 @@ if pagina == "Planillas":
                     md(tarjeta_pago_html(f, ss["empleados"][f["Colaborador"]]), col)
 
             with tarjeta("tabla_planilla"):
-                md(titulo_seccion("📊 Planilla consolidada", "Con fila de TOTAL. Descárgala o guárdala en el historial de Google Sheets como respaldo."))
+                md(titulo_seccion("📊 Planilla consolidada", "Con fila de TOTAL. Con el PDF leído se guarda sola en el historial de Google Sheets y se actualiza con cada cambio."))
+                estado_guardado = chip_autoguardado()
+                if estado_guardado:
+                    md(f"<div class='chips'>{estado_guardado}</div>")
                 df_pl = pd.DataFrame(datos_emp)
                 vista = df_pl[["Colaborador", "Modalidad", "Servicios", "Ventas PDF", "Base Bruta", "Renta", "Base Neta", "Extra", "Ret Pub", "Com Neta", "Bonos", "Desc", "Total"]].rename(columns={
                     "Modalidad": "Forma de pago", "Ventas PDF": "Ventas", "Base Bruta": "Sueldo bruto", "Base Neta": "Sueldo neto", "Extra": "Extra bruto",
@@ -3084,13 +3224,9 @@ if pagina == "Planillas":
                                        file_name=f"Planilla_{ahora_sv().strftime('%Y-%m-%d')}.pdf", mime="application/pdf", **ancho(st.download_button))
                 with d3:
                     guardar_hist = st.button("☁️ Guardar en historial", type="primary", disabled=not ss.get("pdf_ok"), **ancho(st.button),
-                                             help="Guarda el resultado de esta planilla en la hoja «Historial_Planillas». Si el período ya existía, se reemplaza.")
+                                             help="Se guarda sola en «Historial_Planillas»; este botón fuerza un guardado inmediato. Si el período ya existía, se reemplaza.")
                 if guardar_hist:
-                    filas_h = filas_historial(datos_emp)
-                    ss["historial_local"][ss["periodo_texto"]] = filas_h
-                    ss.pop("hist_cache", None)
-                    if guardar_historial_planilla(filas_h, ss["periodo_texto"]):
-                        registrar_auditoria("Planilla guardada en historial", ss["periodo_texto"])
+                    if guardar_planilla_actual(filas_historial(datos_emp)):
                         st.toast("Planilla guardada en el historial de Google Sheets.", icon="☁️")
                     else:
                         st.error("No se pudo guardar en Google Sheets (quedó guardada solo en esta sesión). Revisa la conexión en Configuración → Respaldo y conexión.")
@@ -3496,9 +3632,10 @@ elif pagina == "Auditoría":
         r1.button("🔄 Actualizar historial", on_click=lambda: st.session_state.pop("hist_cache", None), **ancho(st.button))
         if registros:
             df_h = pd.DataFrame(registros)
-            for c in ("Ventas", "Sueldo_Neto", "Comision", "Bonos", "Descuentos", "Renta", "Total", "Servicios"):
+            for c in COLUMNAS_DINERO_HISTORIAL + ("Servicios",):
                 if c in df_h.columns:
                     df_h[c] = df_h[c].map(_a_numero).fillna(0.0)
+            df_h = df_h[[c for c in ENCABEZADOS_HISTORIAL if c in df_h.columns] + [c for c in df_h.columns if c not in ENCABEZADOS_HISTORIAL]]
             periodos = list(dict.fromkeys(df_h["Periodo"].tolist()))[::-1]
             periodo_sel = st.selectbox("Período", periodos, key="hist_periodo")
             sub = df_h[df_h["Periodo"] == periodo_sel]
@@ -3511,8 +3648,10 @@ elif pagina == "Auditoría":
             espacio(8)
             with tarjeta("historial_planillas"):
                 vista_h = sub.drop(columns=[c for c in ("Periodo", "Guardado") if c in sub.columns]).rename(columns={
-                    "Forma_Pago": "Forma de pago", "Sueldo_Neto": "Sueldo neto", "Comision": "Comisión"})
-                formatos = {c: "${:,.2f}" for c in ("Ventas", "Sueldo neto", "Comisión", "Bonos", "Descuentos", "Renta", "Total") if c in vista_h.columns}
+                    "Forma_Pago": "Forma de pago", "Sueldo_Bruto": "Sueldo bruto", "Sueldo_Neto": "Sueldo neto", "Extra_Bruto": "Extra bruto",
+                    "Comision": "Comisión"})
+                formatos = {c: "${:,.2f}" for c in ("Ventas", "Sueldo bruto", "Renta", "Sueldo neto", "Extra bruto", "Pauta", "Comisión", "Bonos", "Descuentos", "Total")
+                            if c in vista_h.columns}
                 st.dataframe(vista_h.style.format(formatos), hide_index=True, **ancho(st.dataframe))
                 st.download_button("⬇️ Descargar este período (CSV)", data=sub.to_csv(index=False).encode("utf-8-sig"),
                                    file_name=f"Historial_{nombre_archivo('', periodo_sel).strip('_').replace('.pdf', '')}.csv", mime="text/csv")
@@ -3525,7 +3664,7 @@ elif pagina == "Auditoría":
                     st.dataframe(comp.style.format({"Ventas": "${:,.2f}", "Pagado": "${:,.2f}", "% de ventas": "{:.1f}%"}), hide_index=True, **ancho(st.dataframe))
         else:
             estado_vacio(img_reporte(), "Todavía no hay planillas guardadas",
-                         "En Planillas, después de revisar los montos, pulsa «☁️ Guardar en historial». Así queda un respaldo de cada quincena o mes.")
+                         "Sube el reporte de ventas en Planillas: la planilla del período se guarda sola aquí (y en Google Sheets) como respaldo de cada quincena o mes.")
 
     with tab_docs:
         historial = ss["historial_auditoria"]
@@ -3871,6 +4010,12 @@ elif pagina == "Configuración":
                 md(GUIA_CONEXION_HTML)
                 st.code(PLANTILLA_SECRETS, language="toml")
         with c2:
+            with tarjeta("autoguardado"):
+                md(titulo_seccion("⚡ Guardado automático de planillas", "Con el PDF leído, todos los pagos del período se guardan solos en la pestaña «Historial_Planillas»."))
+                st.toggle("Guardar cada planilla automáticamente en Google Sheets", value=bool(aj("autoguardado")), key="aj_autoguardado",
+                          on_change=cambiar_autoguardado)
+                st.caption("Se guarda una fila por colaborador (DUI, cargo, sueldo bruto, renta, sueldo neto, extras, pauta, comisión, bonos, descuentos y total). "
+                           "Si vuelves a subir el mismo período, se reemplaza: nunca se duplica.")
             with tarjeta("respaldo"):
                 md(titulo_seccion("💾 Respaldo de datos", "Copia completa de personal, proveedores, ajustes, auditoría e historial de esta sesión."))
                 respaldo = {"version": 4, "fecha": ahora_sv().strftime("%Y-%m-%d %H:%M"), "empleados": ss["empleados"], "proveedores": ss["proveedores"],
@@ -3915,9 +4060,12 @@ elif pagina == "Configuración":
                         st.error(f"No se pudo leer el respaldo: {ex}")
             with tarjeta("plan_respaldo"):
                 md(titulo_seccion("🛡️ Plan de respaldo recomendado") + "<div class='tips'>"
-                   "<div class='tip'><span>1️⃣</span>Cada quincena, en Planillas, pulsa «☁️ Guardar en historial» después de revisar los montos.</div>"
+                   "<div class='tip'><span>1️⃣</span>Cada planilla se guarda sola en «Historial_Planillas» al subir el PDF y se actualiza con cada bono, descuento o cambio de sueldo.</div>"
                    "<div class='tip'><span>2️⃣</span>Cada mes descarga aquí el respaldo completo (JSON) y guárdalo en una carpeta de Google Drive.</div>"
                    "<div class='tip'><span>3️⃣</span>En Google Sheets usa «Archivo → Historial de versiones» para volver a cualquier día, y «Archivo → Hacer una copia» al cierre de cada mes.</div>"
                    "<div class='tip'><span>4️⃣</span>Guarda también los PDF de ventas originales en Drive, por mes.</div></div>")
+
+if pagina != "Planillas":
+    autoguardar_planilla()  # cambios hechos fuera de Planillas (sueldos, personal, reglas) también quedan guardados
 
 pie_pagina()
