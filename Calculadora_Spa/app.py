@@ -121,7 +121,7 @@ NUEVO_EMP = "➕ Nuevo colaborador"
 MODO_NETO_Q = "Neto quincenal"
 MODO_BRUTO_M = "Bruto mensual"
 
-ENCABEZADOS_HISTORIAL = ["Guardado", "Periodo", "Desde", "Hasta", "Quincenas", "Colaborador", "DUI", "Cargo", "Forma_Pago", "Servicios",
+ENCABEZADOS_HISTORIAL = ["Guardado", "Periodo", "Desde", "Hasta", "Quincenas", "Colaborador", "DUI", "Cargo", "Cuenta", "Titular_Cuenta", "Forma_Pago", "Servicios",
                          "Ventas", "Sueldo_Bruto", "Renta", "Sueldo_Neto", "Extra_Bruto", "Pauta", "Comision", "Bonos", "Descuentos", "Total"]
 COLUMNAS_DINERO_HISTORIAL = ("Ventas", "Sueldo_Bruto", "Renta", "Sueldo_Neto", "Extra_Bruto", "Pauta", "Comision", "Bonos", "Descuentos", "Total")
 
@@ -460,25 +460,51 @@ def _escribir_hoja(nombre_hoja, filas):
         return False
 
 
-EMPLEADOS_POR_DEFECTO = {
-    "Maydely Hernández": {"rol": "Operativo", "alias": "MAYDELY", "mod": MOD_ESTANDAR, "porc": 20, "sueldo_base_neto": 183.96},
-    "Luis Violante": {"rol": "Operativo", "alias": "LUIS", "mod": MOD_ESTANDAR, "porc": 20, "sueldo_base_neto": 183.96},
-    "Jessica Lemus": {"rol": "Operativo", "alias": "JESSICA", "mod": MOD_PORCENTAJE, "porc": 20, "sueldo_base_neto": 0.0},
-    "Mario de Paz": {"rol": "Operativo", "alias": "MARIO", "mod": MOD_ESTANDAR, "porc": 20, "sueldo_base_neto": 183.96},
-    "Dr. Gio Molina": {"rol": "Administrativo", "alias": "GIO|MARVIN|DOCTOR", "mod": MOD_FIJO, "porc": 0, "sueldo_base_neto": 300.00},
-    "Gerson Ulises Molina Flores": {"rol": "Administrativo", "alias": "GERSON", "mod": MOD_FIJO, "porc": 0, "sueldo_base_neto": 300.00},
-    "Edwin Bartolo Lara Ponce": {"rol": "Administrativo", "alias": "EDWIN", "mod": MOD_FIJO, "porc": 0, "sueldo_base_neto": 300.00,
-                                 "cargo": "Vendedor", "dui": "04182355-6"},
-}
-CAMPOS_EXTRA_EMPLEADO = ("cargo", "correo", "telefono", "dui", "banco", "cuenta", "fecha_ingreso")
+BANCO_PLANILLA = "Davivienda"
 
-# Altas de personal que la app incorpora una sola vez a la hoja "Personal" (si ya existe, se actualiza su ficha).
+# Cuentas Davivienda para el pago de planilla: (búsqueda en el nombre, cuenta, titular tal como aparece en el banco)
+CUENTAS_DAVIVIENDA = [
+    ([("MARIO",)], "5540496530", "Mario Antonio De Paz Velasquez"),
+    ([("JESSICA",)], "5540496558", "Jessica Gabriela Garcia Lemus"),
+    ([("LUIS",)], "5540496566", "Luis Enrique Violante"),
+    ([("MAYDELY",)], "5540496698", "Maydely Beatriz Hernandez Gonzalez"),
+    ([("GERSON",)], "5540496663", "Gerson Ulises Molina Flores"),
+    ([("EDWIN",)], "5540496670", "Edwin Bartolo Ponce Lara"),
+    ([("GIO", "MOLINA"), ("MARVIN",)], "5540496680", "Marvin Giovanni Molina Flores"),
+]
+
+
+def _datos_banco(cuenta, titular):
+    return {"banco": BANCO_PLANILLA, "cuenta": cuenta, "titular": titular}
+
+
+EMPLEADOS_POR_DEFECTO = {
+    "Maydely Hernández": {"rol": "Operativo", "alias": "MAYDELY", "mod": MOD_ESTANDAR, "porc": 20, "sueldo_base_neto": 183.96,
+                          **_datos_banco("5540496698", "Maydely Beatriz Hernandez Gonzalez")},
+    "Luis Violante": {"rol": "Operativo", "alias": "LUIS", "mod": MOD_ESTANDAR, "porc": 20, "sueldo_base_neto": 183.96,
+                      **_datos_banco("5540496566", "Luis Enrique Violante")},
+    "Jessica Lemus": {"rol": "Operativo", "alias": "JESSICA", "mod": MOD_PORCENTAJE, "porc": 20, "sueldo_base_neto": 0.0,
+                      **_datos_banco("5540496558", "Jessica Gabriela Garcia Lemus")},
+    "Mario de Paz": {"rol": "Operativo", "alias": "MARIO", "mod": MOD_ESTANDAR, "porc": 20, "sueldo_base_neto": 183.96,
+                     **_datos_banco("5540496530", "Mario Antonio De Paz Velasquez")},
+    "Dr. Gio Molina": {"rol": "Administrativo", "alias": "GIO|MARVIN|DOCTOR", "mod": MOD_FIJO, "porc": 0, "sueldo_base_neto": 300.00,
+                       **_datos_banco("5540496680", "Marvin Giovanni Molina Flores")},
+    "Gerson Ulises Molina Flores": {"rol": "Administrativo", "alias": "GERSON", "mod": MOD_FIJO, "porc": 0, "sueldo_base_neto": 300.00,
+                                    **_datos_banco("5540496663", "Gerson Ulises Molina Flores")},
+    "Edwin Bartolo Lara Ponce": {"rol": "Administrativo", "alias": "EDWIN", "mod": MOD_FIJO, "porc": 0, "sueldo_base_neto": 300.00,
+                                 "cargo": "Vendedor", "dui": "04182355-6", **_datos_banco("5540496670", "Edwin Bartolo Ponce Lara")},
+}
+CAMPOS_EXTRA_EMPLEADO = ("cargo", "correo", "telefono", "dui", "banco", "cuenta", "titular", "fecha_ingreso")
+
+# Cambios de personal que la app aplica una sola vez a la hoja "Personal" (altas nuevas y datos bancarios).
+# "crear": False → solo actualiza a la persona si existe; nunca la agrega.
 ALTAS_PENDIENTES = [
     {"clave": "alta_edwin_04182355-6", "nombre": "Edwin Bartolo Lara Ponce", "buscar": ("EDWIN", "PONCE"),
      "igualar_sueldo_a": ("Gerson Ulises Molina Flores", "Dr. Gio Molina"),
      "datos": {"rol": "Administrativo", "alias": "EDWIN", "mod": MOD_FIJO, "porc": 0, "sueldo_base_neto": 300.00,
                "cargo": "Vendedor", "dui": "04182355-6"}},
-]
+] + [{"clave": f"cuenta_davivienda_{cuenta}", "buscar": buscar, "crear": False, "datos": _datos_banco(cuenta, titular)}
+     for buscar, cuenta, titular in CUENTAS_DAVIVIENDA]
 
 
 def sueldo_neto_por_defecto(rol):
@@ -525,7 +551,7 @@ def cargar_empleados():
                     "porc": r.get("Porcentaje", 0), "sueldo_base_neto": _leer_sueldo_neto(r, rol),
                     "cargo": r.get("Cargo", ""), "correo": r.get("Correo", ""), "telefono": r.get("Telefono", ""),
                     "dui": r.get("DUI", ""), "banco": r.get("Banco", ""), "cuenta": r.get("Cuenta", ""),
-                    "fecha_ingreso": r.get("Fecha_Ingreso", ""),
+                    "titular": r.get("Titular_Cuenta", ""), "fecha_ingreso": r.get("Fecha_Ingreso", ""),
                 })
             if emp_dict:
                 return emp_dict, "Google Sheets"
@@ -537,12 +563,13 @@ def cargar_empleados():
 def guardar_empleados(datos):
     if not datos:
         return False
-    filas = [["Nombre", "Cargo", "Rol", "Alias", "Modalidad", "Porcentaje", "Sueldo_Base_Neto", "Correo", "Telefono", "DUI", "Banco", "Cuenta", "Fecha_Ingreso"]]
+    filas = [["Nombre", "Cargo", "Rol", "Alias", "Modalidad", "Porcentaje", "Sueldo_Base_Neto", "Correo", "Telefono", "DUI", "Banco", "Cuenta",
+              "Titular_Cuenta", "Fecha_Ingreso"]]
     for nombre, info in datos.items():
         filas.append([_valor_para_sheets(x) for x in [
             nombre, info.get("cargo", ""), info.get("rol", ""), info.get("alias", ""), info.get("mod", ""),
             info.get("porc", 0), sueldo_neto_de(info), info.get("correo", ""), info.get("telefono", ""),
-            info.get("dui", ""), info.get("banco", ""), info.get("cuenta", ""), info.get("fecha_ingreso", "")]])
+            info.get("dui", ""), info.get("banco", ""), info.get("cuenta", ""), info.get("titular", ""), info.get("fecha_ingreso", "")]])
     return _escribir_hoja("Personal", filas)
 
 
@@ -825,8 +852,19 @@ def base_neta_periodo(info):
     return 0.0 if "Porcentaje" in info.get("mod", "Fijo") else round(sueldo_neto_de(info) * st.session_state["quincenas_multiplicador"], 2)
 
 
+def _buscar_empleado(empleados, buscar):
+    """Nombre del colaborador cuyo nombre contiene todas las palabras de alguna de las alternativas de búsqueda."""
+    alternativas = [buscar] if buscar and isinstance(buscar[0], str) else list(buscar)
+    for alternativa in alternativas:
+        for nombre in empleados:
+            palabras = set(re.findall(r"[A-Z]+", _normalizar(nombre)))
+            if all(p in palabras for p in alternativa):
+                return nombre
+    return None
+
+
 def aplicar_altas_pendientes():
-    """Incorpora una sola vez a la hoja «Personal» las altas de ALTAS_PENDIENTES (si luego se borra a la persona, no vuelve a aparecer)."""
+    """Aplica una sola vez a la hoja «Personal» los cambios de ALTAS_PENDIENTES (si luego se borra a alguien, no vuelve a aparecer)."""
     ss = st.session_state
     if ss.get("_altas_revisadas"):
         return
@@ -834,27 +872,31 @@ def aplicar_altas_pendientes():
     if ss.get("fuente_personal") != "Google Sheets":
         return  # sin hoja de personal, los datos locales ya traen a todo el personal por defecto
     aplicadas = [c.strip() for c in _texto(aj("altas_aplicadas")).split(",") if c.strip()]
-    nuevas = []
+    revisadas, cambiados = [], []
     for alta in ALTAS_PENDIENTES:
         if alta["clave"] in aplicadas:
             continue
+        revisadas.append(alta["clave"])
         datos = dict(alta["datos"])
         for ref in alta.get("igualar_sueldo_a", ()):
             if ref in ss["empleados"]:
                 datos["sueldo_base_neto"] = sueldo_neto_de(ss["empleados"][ref])
                 break
-        existente = next((n for n in ss["empleados"] if all(p in _normalizar(n) for p in alta["buscar"])), None)
+        existente = _buscar_empleado(ss["empleados"], alta["buscar"])
         if existente:
             info = dict(ss["empleados"][existente])
             info.update({k: v for k, v in datos.items() if k != "alias" or not _texto(info.get("alias"))})
             ss["empleados"][existente] = _empleado_normalizado(info)
-        else:
+            cambiados.append(existente)
+        elif alta.get("crear", True):
             ss["empleados"][alta["nombre"]] = _empleado_normalizado(datos)
-        nuevas.append(alta)
-    if nuevas and guardar_empleados(ss["empleados"]):
-        ss["ajustes"]["altas_aplicadas"] = ",".join(aplicadas + [a["clave"] for a in nuevas])
-        guardar_ajustes(ss["ajustes"])
-        ss["_toasts"].append((f"Personal actualizado en Google Sheets: {', '.join(a['nombre'] for a in nuevas)}.", "👤"))
+            cambiados.append(alta["nombre"])
+    if not revisadas or (cambiados and not guardar_empleados(ss["empleados"])):
+        return
+    ss["ajustes"]["altas_aplicadas"] = ",".join(aplicadas + revisadas)
+    guardar_ajustes(ss["ajustes"])
+    if cambiados:
+        ss["_toasts"].append((f"Personal actualizado en Google Sheets ({len(set(cambiados))} colaborador(es): altas y cuentas de {BANCO_PLANILLA}).", "👤"))
 
 
 aplicar_altas_pendientes()
@@ -2745,7 +2787,8 @@ def guardar_form_empleado():
     info = _empleado_normalizado({
         "rol": rol, "mod": mod, "porc": porc, "alias": ss.get("fe_alias"), "sueldo_base_neto": sueldo,
         "cargo": ss.get("fe_cargo"), "correo": correo, "telefono": ss.get("fe_telefono"), "dui": ss.get("fe_dui"),
-        "banco": ss.get("fe_banco"), "cuenta": ss.get("fe_cuenta"), "fecha_ingreso": ss.get("fe_fecha_ingreso"),
+        "banco": ss.get("fe_banco"), "cuenta": cuenta_banco(ss.get("fe_cuenta")), "titular": ss.get("fe_titular"),
+        "fecha_ingreso": ss.get("fe_fecha_ingreso"),
     })
     if es_nuevo:
         nuevos = dict(ss["empleados"])
@@ -3019,13 +3062,60 @@ def filas_historial(datos_emp):
         filas.append({
             "Guardado": guardado, "Periodo": ss["periodo_texto"], "Desde": pi.get("inicio", ""), "Hasta": pi.get("fin", ""),
             "Quincenas": float(ss["quincenas_multiplicador"]), "Colaborador": d["Colaborador"], "DUI": _texto(info.get("dui")),
-            "Cargo": _texto(info.get("cargo")) or _texto(info.get("rol")), "Forma_Pago": d["Modalidad"], "Servicios": int(d["Servicios"]),
+            "Cargo": _texto(info.get("cargo")) or _texto(info.get("rol")), "Cuenta": cuenta_banco(info.get("cuenta")),
+            "Titular_Cuenta": _texto(info.get("titular")), "Forma_Pago": d["Modalidad"], "Servicios": int(d["Servicios"]),
             "Ventas": round(float(d["Ventas PDF"]), 2), "Sueldo_Bruto": round(float(d["Base Bruta"]), 2), "Renta": round(float(d["Renta"]), 2),
             "Sueldo_Neto": round(float(d["Base Neta"]), 2), "Extra_Bruto": round(float(d["Extra"]), 2), "Pauta": round(float(d["Ret Pub"]), 2),
             "Comision": round(float(d["Com Neta"]), 2), "Bonos": round(float(d["Bonos"]), 2), "Descuentos": round(float(d["Desc"]), 2),
             "Total": round(float(d["Total"]), 2),
         })
     return filas
+
+
+def cuenta_banco(v):
+    """Cuenta solo con números ('5540-496530' → '5540496530'; también corrige '5540496530.0' de Excel)."""
+    return re.sub(r"[\s\-]", "", re.sub(r"\.0+$", "", _texto(v)))
+
+
+def nombre_banco(v):
+    """Nombre apto para el banco: sin tildes, sin comas ni comillas (la coma separa las columnas)."""
+    t = unicodedata.normalize("NFKD", _texto(v)).encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"\s+", " ", re.sub(r"[,;\"']", " ", t)).strip()
+
+
+def monto_banco(x):
+    """185.49 → '185.49' · 65.60 → '65.6' · 300.00 → '300' (igual que el archivo que acepta el banco)."""
+    return f"{round(float(x), 2):.2f}".rstrip("0").rstrip(".") or "0"
+
+
+def armar_pago_banco(pagos):
+    """Archivo de pago masivo separado por comas: cuenta,monto,nombre del titular (una línea por persona, sin encabezado)."""
+    lineas, incluidos, problemas = [], [], []
+    for p in pagos:
+        colaborador = _texto(p.get("Colaborador"))
+        cuenta = cuenta_banco(p.get("Cuenta"))
+        monto = round(float(_a_numero(p.get("Monto")) or 0.0), 2)
+        nombre = nombre_banco(p.get("Nombre")) or nombre_banco(colaborador)
+        if not cuenta.isdigit():
+            problemas.append(f"{colaborador} (no tiene una cuenta bancaria válida)")
+        elif monto <= 0:
+            problemas.append(f"{colaborador} (monto de {usd(monto)})")
+        else:
+            lineas.append(f"{cuenta},{monto_banco(monto)},{nombre}")
+            incluidos.append({"Colaborador": colaborador, "Cuenta": cuenta, "Monto": monto, "Nombre": nombre})
+    texto = "\r\n".join(lineas) + ("\r\n" if lineas else "")
+    return texto, incluidos, problemas
+
+
+def nombre_archivo_pago(base):
+    pi = st.session_state.get("periodo_info") or {}
+    limpio = re.sub(r'[\\/:*?"<>|]', "", nombre_banco(base)) or "Pago de planilla"
+    sufijo = f"{pi['inicio']} al {pi['fin']}".replace("/", "-") if pi else ahora_sv().strftime("%d-%m-%Y")
+    return f"{limpio} {sufijo}.csv"
+
+
+def registrar_archivo_pago(cantidad, total):
+    registrar_auditoria(f"Archivo de pago {BANCO_PLANILLA}", f"{st.session_state['periodo_texto']} · {cantidad} pago(s) · {usd(total)}")
 
 
 def firma_planilla(filas):
@@ -3230,6 +3320,81 @@ if pagina == "Planillas":
                         st.toast("Planilla guardada en el historial de Google Sheets.", icon="☁️")
                     else:
                         st.error("No se pudo guardar en Google Sheets (quedó guardada solo en esta sesión). Revisa la conexión en Configuración → Respaldo y conexión.")
+
+            espacio(10)
+            with tarjeta("pago_banco"):
+                md(titulo_seccion(f"🏦 Pago de planilla · {BANCO_PLANILLA}",
+                                  "Archivo separado por comas (cuenta, monto, nombre del titular) con los totales de esta planilla, listo para cargar en la banca en línea."))
+                base_pago = pd.DataFrame([{
+                    "Pagar": bool(d["Total"] > 0), "Colaborador": d["Colaborador"],
+                    "Cuenta": cuenta_banco(ss["empleados"].get(d["Colaborador"], {}).get("cuenta")),
+                    "Monto": round(float(d["Total"]), 2),
+                    "Nombre en el banco": _texto(ss["empleados"].get(d["Colaborador"], {}).get("titular")) or d["Colaborador"],
+                } for d in datos_emp])
+                pago_editado = st.data_editor(
+                    base_pago, hide_index=True, key=f"editor_pago_{ss['nonce_editor_personal']}", disabled=["Colaborador", "Monto"],
+                    column_config={
+                        "Pagar": st.column_config.CheckboxColumn("Pagar", help="Desmarca a quien no se le paga por banco en este período."),
+                        "Colaborador": st.column_config.TextColumn("Colaborador"),
+                        "Cuenta": st.column_config.TextColumn(f"Cuenta {BANCO_PLANILLA}", help="Solo números."),
+                        "Monto": st.column_config.NumberColumn("Monto a pagar", format="$%.2f",
+                                                               help="Total de la planilla. Para cambiarlo usa bonos o descuentos en el detalle de la persona."),
+                        "Nombre en el banco": st.column_config.TextColumn("Nombre del titular", width="large"),
+                    },
+                    **ancho(st.data_editor),
+                )
+                seleccion = pago_editado[pago_editado["Pagar"].fillna(False).astype(bool)]
+                texto_pago, incluidos, problemas = armar_pago_banco([
+                    {"Colaborador": r["Colaborador"], "Cuenta": r["Cuenta"], "Monto": r["Monto"], "Nombre": r["Nombre en el banco"]}
+                    for r in seleccion.to_dict("records")])
+                total_banco = round(sum(p["Monto"] for p in incluidos), 2)
+                chips_pago = chip(f"✅ {len(incluidos)} pago(s) en el archivo", "green") + chip(f"💵 Total {usd(total_banco)}", "indigo")
+                if len(seleccion) < len(pago_editado):
+                    chips_pago += chip(f"⏭️ {len(pago_editado) - len(seleccion)} desmarcado(s)", "sky")
+                if abs(total_banco - total_pagar) > 0.005:
+                    chips_pago += chip(f"Diferencia con la planilla: {usd(total_pagar - total_banco)}", "amber")
+                md(f"<div class='chips'>{chips_pago}</div>")
+                if problemas:
+                    st.warning("No se incluyeron en el archivo: " + "; ".join(problemas) + ". Revisa su cuenta en la tabla o en Configuración → Personal y sueldos.")
+
+                cambios_cuenta = {}
+                for r in pago_editado.to_dict("records"):
+                    info_r = ss["empleados"].get(r["Colaborador"], {})
+                    cuenta_n, titular_n = cuenta_banco(r.get("Cuenta")), _texto(r.get("Nombre en el banco"))
+                    titular_actual = _texto(info_r.get("titular")) or r["Colaborador"]
+                    if info_r and (cuenta_n != cuenta_banco(info_r.get("cuenta")) or (titular_n and titular_n != titular_actual)):
+                        cambios_cuenta[r["Colaborador"]] = (cuenta_n, titular_n or titular_actual)
+
+                n1, n2, n3 = columnas([1.2, 1.3, 1], "bottom")
+                with n1:
+                    sembrar("dav_nombre", "Pago de planilla")
+                    st.text_input("Nombre del pago", key="dav_nombre", help="Se usa como nombre del archivo, junto con las fechas del período.")
+                with n2:
+                    st.download_button(f"⬇️ Descargar archivo {BANCO_PLANILLA} (CSV)", data=texto_pago.encode("utf-8"),
+                                       file_name=nombre_archivo_pago(ss.get("dav_nombre")), mime="text/csv", type="primary",
+                                       disabled=not incluidos, on_click=registrar_archivo_pago, args=(len(incluidos), total_banco),
+                                       **ancho(st.download_button))
+                with n3:
+                    guardar_ctas = st.button(f"💾 Guardar {len(cambios_cuenta)} cuenta(s)", disabled=not cambios_cuenta, **ancho(st.button),
+                                             help="Guarda en el personal (y en Google Sheets) las cuentas o nombres que cambiaste en esta tabla.")
+                if guardar_ctas and cambios_cuenta:
+                    nuevos_ctas = {}
+                    for k, v in ss["empleados"].items():
+                        if k in cambios_cuenta:
+                            v = dict(v)
+                            v["cuenta"], v["titular"] = cambios_cuenta[k]
+                            if not _texto(v.get("banco")):
+                                v["banco"] = BANCO_PLANILLA
+                        nuevos_ctas[k] = v
+                    if _aplicar_cambios_personal(nuevos_ctas):
+                        notificar(f"Cuentas actualizadas: {', '.join(cambios_cuenta)}.", "🏦")
+                    else:
+                        notificar_error("Las cuentas quedaron en esta sesión, pero no se pudieron guardar en Google Sheets.")
+                    ss["fe_recargar"] = True
+                    st.rerun()
+                with st.expander("👁️ Ver el contenido del archivo"):
+                    st.code(texto_pago or "(No hay pagos para incluir)", language=None)
+                    st.caption("Formato: cuenta,monto,nombre · una línea por persona · sin encabezado · montos con punto decimal · nombres sin tildes.")
 
         espacio(10)
         c_ind, c_mas = st.columns([1.25, 1])
@@ -3649,12 +3814,23 @@ elif pagina == "Auditoría":
             with tarjeta("historial_planillas"):
                 vista_h = sub.drop(columns=[c for c in ("Periodo", "Guardado") if c in sub.columns]).rename(columns={
                     "Forma_Pago": "Forma de pago", "Sueldo_Bruto": "Sueldo bruto", "Sueldo_Neto": "Sueldo neto", "Extra_Bruto": "Extra bruto",
-                    "Comision": "Comisión"})
+                    "Comision": "Comisión", "Titular_Cuenta": "Titular de la cuenta"})
                 formatos = {c: "${:,.2f}" for c in ("Ventas", "Sueldo bruto", "Renta", "Sueldo neto", "Extra bruto", "Pauta", "Comisión", "Bonos", "Descuentos", "Total")
                             if c in vista_h.columns}
                 st.dataframe(vista_h.style.format(formatos), hide_index=True, **ancho(st.dataframe))
-                st.download_button("⬇️ Descargar este período (CSV)", data=sub.to_csv(index=False).encode("utf-8-sig"),
-                                   file_name=f"Historial_{nombre_archivo('', periodo_sel).strip('_').replace('.pdf', '')}.csv", mime="text/csv")
+                h1, h2 = st.columns(2)
+                with h1:
+                    st.download_button("⬇️ Descargar este período (CSV)", data=sub.to_csv(index=False).encode("utf-8-sig"),
+                                       file_name=f"Historial_{nombre_archivo('', periodo_sel).strip('_').replace('.pdf', '')}.csv", mime="text/csv",
+                                       **ancho(st.download_button))
+                if "Cuenta" in sub.columns:
+                    texto_h, incluidos_h, _ = armar_pago_banco([
+                        {"Colaborador": r.get("Colaborador"), "Cuenta": r.get("Cuenta"), "Monto": r.get("Total"), "Nombre": r.get("Titular_Cuenta")}
+                        for r in sub.to_dict("records")])
+                    with h2:
+                        st.download_button(f"🏦 Archivo {BANCO_PLANILLA} de este período", data=texto_h.encode("utf-8"), disabled=not incluidos_h,
+                                           file_name=f"Pago de planilla {nombre_banco(periodo_sel).replace('/', '-')[:60]}.csv", mime="text/csv",
+                                           key="dl_banco_historial", **ancho(st.download_button))
             if len(periodos) > 1:
                 with tarjeta("historial_resumen"):
                     md(titulo_seccion("📈 Comparativo entre períodos", "Total pagado y ventas de cada planilla guardada"))
@@ -3761,11 +3937,14 @@ elif pagina == "Configuración":
                 b.text_input("Teléfono", key="fe_telefono")
                 c.text_input("DUI", key="fe_dui", placeholder="00000000-0")
                 a, b, c = st.columns(3)
-                a.text_input("Banco", key="fe_banco")
-                b.text_input("Cuenta bancaria", key="fe_cuenta")
-                c.text_input("Fecha de ingreso", key="fe_fecha_ingreso", placeholder="dd/mm/aaaa")
-                st.text_input("Alias en el reporte PDF", key="fe_alias",
-                              help="Nombre con el que aparece en la columna PROFESIONAL del reporte. Varios separados con | (ej. MAYDELY|MEY). Vacío = primer nombre.")
+                a.text_input("Banco", key="fe_banco", placeholder=f"Ej. {BANCO_PLANILLA}")
+                b.text_input("Cuenta bancaria", key="fe_cuenta", placeholder="Solo números")
+                c.text_input("Titular de la cuenta", key="fe_titular", placeholder="Como aparece en el banco",
+                             help=f"Nombre que va en el archivo de pago de {BANCO_PLANILLA}. Vacío = nombre del colaborador.")
+                a, b = st.columns([1, 2])
+                a.text_input("Fecha de ingreso", key="fe_fecha_ingreso", placeholder="dd/mm/aaaa")
+                b.text_input("Alias en el reporte PDF", key="fe_alias",
+                             help="Nombre con el que aparece en la columna PROFESIONAL del reporte. Varios separados con | (ej. MAYDELY|MEY). Vacío = primer nombre.")
                 g1, g2, _ = st.columns([1.3, 1, 1.6])
                 g1.button("💾 Guardar colaborador", type="primary", on_click=guardar_form_empleado, **ancho(st.button))
                 if ss.get("fe_sel") in ss["empleados"]:
@@ -3806,7 +3985,8 @@ elif pagina == "Configuración":
         with st.expander("📋 Edición rápida en tabla (varias personas a la vez)"):
             df_emp = pd.DataFrame([{"Nombre": n, "rol": i.get("rol", ""), "mod": i.get("mod", MOD_FIJO), "sueldo_base_neto": float(sueldo_neto_de(i)),
                                     "porc": float(i.get("porc", 0) or 0), "alias": i.get("alias", ""), "correo": i.get("correo", ""),
-                                    "dui": i.get("dui", ""), "cuenta": i.get("cuenta", "")} for n, i in ss["empleados"].items()])
+                                    "dui": i.get("dui", ""), "cuenta": i.get("cuenta", ""), "titular": i.get("titular", "")}
+                                   for n, i in ss["empleados"].items()])
             df_editado = st.data_editor(
                 df_emp, num_rows="dynamic", hide_index=True, key=f"editor_personal_{ss['nonce_editor_personal']}",
                 column_config={
@@ -3819,6 +3999,7 @@ elif pagina == "Configuración":
                     "correo": st.column_config.TextColumn("Correo"),
                     "dui": st.column_config.TextColumn("DUI"),
                     "cuenta": st.column_config.TextColumn("Cuenta bancaria"),
+                    "titular": st.column_config.TextColumn("Titular de la cuenta"),
                 },
                 **ancho(st.data_editor),
             )
@@ -3832,7 +4013,8 @@ elif pagina == "Configuración":
                     previo = anteriores.get(nombre, {})
                     datos_emp_tabla = dict(previo)
                     datos_emp_tabla.update({"rol": r.get("rol"), "mod": r.get("mod"), "porc": r.get("porc"), "sueldo_base_neto": r.get("sueldo_base_neto"),
-                                            "alias": r.get("alias"), "correo": r.get("correo"), "dui": r.get("dui"), "cuenta": r.get("cuenta")})
+                                            "alias": r.get("alias"), "correo": r.get("correo"), "dui": r.get("dui"),
+                                            "cuenta": cuenta_banco(r.get("cuenta")), "titular": r.get("titular")})
                     info_n = _empleado_normalizado(datos_emp_tabla)
                     nuevos[nombre] = info_n
                     if (not previo or previo.get("rol") != info_n["rol"] or previo.get("mod") != info_n["mod"]
