@@ -1,8 +1,11 @@
-streamlit>=1.40
-pandas
-pdfplumber
-fpdf2
-Pillow
-gspread>=5.12
-google-auth
-plotly>=5.19
+# Rangos compatibles con las versiones probadas el 2026-10-20:
+# streamlit 1.66.0 · pandas 3.0.6 · pdfplumber 0.11.10 · fpdf2 2.8.9 · pillow 12.3.0 · gspread 6.2.1 · google-auth 2.62.0 · plotly 7.1.0 · openpyxl 3.1.5
+streamlit>=1.40,<2
+pandas>=2.2,<4
+pdfplumber>=0.11,<0.12
+fpdf2>=2.7,<3
+Pillow>=10,<13
+gspread>=5.12,<7
+google-auth>=2.20,<3
+plotly>=5.19,<8
+openpyxl>=3.1,<4
