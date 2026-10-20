@@ -12,8 +12,10 @@ import json
 import os
 import re
 import smtplib
+import time
 import unicodedata
 from datetime import date, datetime, timedelta, timezone
+from types import SimpleNamespace
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -27,6 +29,20 @@ import streamlit as st
 from fpdf import FPDF
 from google.oauth2.service_account import Credentials
 from PIL import Image
+
+from nucleo import finanzas as fin
+from nucleo import personal as per
+from nucleo import seguridad as seg
+from nucleo.almacen import TABLAS, Almacen, BackendSheets, ColaPendientes
+from nucleo.hojas import reemplazar_contenido
+from vistas import anticipos as v_anticipos
+from vistas import asistencia as v_asistencia
+from vistas import comun as v_comun
+from vistas import expediente as v_expediente
+from vistas import finanzas as v_finanzas
+from vistas import pagos as v_pagos
+from vistas import panel as v_panel
+from vistas import seguridad as v_seguridad
 
 
 # =====================================================================
@@ -64,8 +80,22 @@ AJUSTES_POR_DEFECTO = {
     "logo_b64": "",
     "autoguardado": True,      # guardar cada planilla en Google Sheets automáticamente
     "altas_aplicadas": "",     # altas de personal ya incorporadas (para no repetirlas)
+    # Listas configurables (separadas por comas)
+    "metodos_pago": ", ".join(fin.METODOS_DEFECTO),
+    "conceptos_pago": ", ".join(fin.CONCEPTOS_PAGO_DEFECTO),
+    "categorias_gasto": ", ".join(fin.CATEGORIAS_GASTO_DEFECTO),
+    "categorias_ingreso": ", ".join(fin.CATEGORIAS_INGRESO_DEFECTO),
+    "negocios": "Papi Spa, Relájate Man, Dr. Gio Molina, Relájate Clinic, General / administración",
+    # Asistencia (valores de referencia: verifícalos con la normativa laboral vigente)
+    "tolerancia_min": 10.0,
+    "jornada_diaria_h": 8.0,
+    "jornada_semanal_h": 44.0,
+    "umbral_horas_extra_min": 15.0,
+    "pausas_habilitadas": True,
+    "dias_alerta": 30.0,
 }
-AJUSTES_NUMERICOS = ("salario_minimo", "umbral_extra", "retencion_pub_pct", "renta_pct")
+AJUSTES_NUMERICOS = ("salario_minimo", "umbral_extra", "retencion_pub_pct", "renta_pct", "tolerancia_min", "jornada_diaria_h",
+                     "jornada_semanal_h", "umbral_horas_extra_min", "dias_alerta")
 REGLAS_OFICIALES = {"umbral_extra": 60.0, "retencion_pub_pct": 25.0, "renta_pct": 10.0}
 
 TEMAS = {
@@ -79,12 +109,17 @@ TEMAS = {
 }
 
 MENU = [
-    ("Principal", [("Planillas", "💼", "Planillas"), ("Ecommerce", "🏪", "E-commerce"), ("Dashboard", "📊", "Panel general")]),
-    ("Gestión", [("Proveedores", "📇", "Proveedores"), ("Memorándums", "📝", "Memorándums"), ("Amonestaciones", "⚠️", "Amonestaciones")]),
+    ("Principal", [("Planillas", "💼", "Planillas"), ("Ecommerce", "🏪", "E-commerce"), ("Dashboard", "📊", "Panel general"),
+                   ("PanelAdmin", "📈", "Panel administrativo")]),
+    ("Personal", [("Expediente", "🪪", "Expediente"), ("Pagos", "💸", "Pagos al personal"), ("Anticipos", "🤝", "Anticipos y préstamos"),
+                  ("Asistencia", "🕒", "Asistencia y horarios")]),
+    ("Finanzas y gestión", [("Finanzas", "🏦", "Caja y cuentas"), ("Proveedores", "📇", "Proveedores"), ("Memorándums", "📝", "Memorándums"),
+                            ("Amonestaciones", "⚠️", "Amonestaciones")]),
     ("Sistema", [("Auditoría", "🗂️", "Historial"), ("Configuración", "⚙️", "Configuración")]),
 ]
-PAGINAS_VALIDAS = [p for _, items in MENU for p, _, _ in items]
-ETIQUETAS_PAGINA = {p: f"{icono} {etiqueta}" for _, items in MENU for p, icono, etiqueta in items}
+MENU_OPERATIVO = [("Mi espacio", [("MiAsistencia", "🕒", "Mi asistencia")])]
+PAGINAS_VALIDAS = [p for _, items in MENU + MENU_OPERATIVO for p, _, _ in items]
+ETIQUETAS_PAGINA = {p: f"{icono} {etiqueta}" for _, items in MENU + MENU_OPERATIVO for p, icono, etiqueta in items}
 
 DIAS = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
 MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
@@ -122,7 +157,8 @@ MODO_NETO_Q = "Neto quincenal"
 MODO_BRUTO_M = "Bruto mensual"
 
 ENCABEZADOS_HISTORIAL = ["Guardado", "Periodo", "Desde", "Hasta", "Quincenas", "Colaborador", "DUI", "Cargo", "Cuenta", "Titular_Cuenta", "Forma_Pago", "Servicios",
-                         "Ventas", "Sueldo_Bruto", "Renta", "Sueldo_Neto", "Extra_Bruto", "Pauta", "Comision", "Bonos", "Descuentos", "Total"]
+                         "Ventas", "Sueldo_Bruto", "Renta", "Sueldo_Neto", "Extra_Bruto", "Pauta", "Comision", "Bonos", "Descuentos", "Total",
+                         "Periodo_Clave", "Negocio", "Notas", "Usuario"]
 COLUMNAS_DINERO_HISTORIAL = ("Ventas", "Sueldo_Bruto", "Renta", "Sueldo_Neto", "Extra_Bruto", "Pauta", "Comision", "Bonos", "Descuentos", "Total")
 
 
@@ -266,6 +302,27 @@ def coincide_alias(nombre_norm, patron):
         return re.search(patron, nombre_norm) is not None
     except re.error:
         return any(p in nombre_norm for p in patron.split("|"))
+
+
+def mascara_alias(nombres_norm, patron):
+    """Servicios que corresponden a un alias. Cada parte del alias se busca como PALABRA completa
+    («GIO» no toma a «SERGIO»); si una parte no aparece como palabra, se usa la coincidencia parcial de siempre."""
+    partes = [p for p in patron.split("|") if p]
+    resultado = pd.Series(False, index=nombres_norm.index)
+    avisos = []
+    for parte in partes:
+        try:
+            exacta = nombres_norm.map(lambda n: re.search(rf"(?<![A-Z0-9]){parte}(?![A-Z0-9])", n) is not None).astype(bool)
+        except re.error:
+            exacta = pd.Series(False, index=nombres_norm.index)
+        if exacta.any():
+            resultado |= exacta
+            continue
+        parcial = nombres_norm.map(lambda n: coincide_alias(n, parte)).astype(bool)
+        if parcial.any():
+            avisos.append(parte)
+        resultado |= parcial
+    return resultado, avisos
 
 
 def _parse_fecha_texto(s):
@@ -448,13 +505,34 @@ def _registros_validos(datos_list):
     return [r for r in datos_list if any(_valor_para_sheets(v) != "" for v in r.values())]
 
 
+def sheets_configurado():
+    """True si los Secrets traen credenciales y enlace de Google Sheets (aunque la conexión falle)."""
+    return bool(secreto("gcp_service_account")) and bool(_texto(secreto("gsheets", "url")))
+
+
+def _marcar_carga(hoja, estado):
+    """'ok' (leída de Sheets), 'local' (Sheets no configurado) o 'error' (configurado pero no se pudo leer)."""
+    st.session_state.setdefault("carga_hojas", {})[hoja] = estado
+
+
+def _escritura_bloqueada(nombre_hoja):
+    if st.session_state.get("carga_hojas", {}).get(nombre_hoja) == "error":
+        notificar_error(f"No se guardó «{nombre_hoja}» en Google Sheets: al abrir la app no se pudo leer esa hoja y escribir ahora "
+                        "podría reemplazar datos reales. Ve a Configuración → Respaldo y conexión → «Recargar desde Sheets» y vuelve a intentarlo.")
+        return True
+    return False
+
+
 def _escribir_hoja(nombre_hoja, filas):
+    """Reemplaza el contenido de una hoja SIN borrarla primero: escribe encima y después limpia solo lo sobrante.
+    Si algo falla a mitad de camino, los datos anteriores no se pierden."""
+    if _escritura_bloqueada(nombre_hoja):
+        return False
     worksheet = conectar_gsheets(nombre_hoja, crear=True)
     if not worksheet:
         return False
     try:
-        worksheet.clear()
-        worksheet.update(values=filas, range_name="A1")
+        reemplazar_contenido(worksheet, filas)
         return True
     except Exception:
         return False
@@ -462,49 +540,26 @@ def _escribir_hoja(nombre_hoja, filas):
 
 BANCO_PLANILLA = "Davivienda"
 
-# Cuentas Davivienda para el pago de planilla: (búsqueda en el nombre, cuenta, titular tal como aparece en el banco)
-CUENTAS_DAVIVIENDA = [
-    ([("MARIO",)], "5540496530", "Mario Antonio De Paz Velasquez"),
-    ([("JESSICA",)], "5540496558", "Jessica Gabriela Garcia Lemus"),
-    ([("LUIS",)], "5540496566", "Luis Enrique Violante"),
-    ([("MAYDELY",)], "5540496698", "Maydely Beatriz Hernandez Gonzalez"),
-    ([("GERSON",)], "5540496663", "Gerson Ulises Molina Flores"),
-    ([("EDWIN",)], "5540496670", "Edwin Bartolo Ponce Lara"),
-    ([("GIO", "MOLINA"), ("MARVIN",)], "5540496680", "Marvin Giovanni Molina Flores"),
-]
-
-
-def _datos_banco(cuenta, titular):
-    return {"banco": BANCO_PLANILLA, "cuenta": cuenta, "titular": titular}
-
-
+# Personal de arranque (solo se usa si la hoja «Personal» está vacía o si Google Sheets no está configurado).
+# Por seguridad NO contiene cuentas bancarias ni DUI: esos datos viven en Google Sheets
+# (se cargan en Configuración → Personal y sueldos, o con «Importar cuentas desde el archivo de Davivienda»).
 EMPLEADOS_POR_DEFECTO = {
-    "Maydely Hernández": {"rol": "Operativo", "alias": "MAYDELY", "mod": MOD_ESTANDAR, "porc": 20, "sueldo_base_neto": 183.96,
-                          **_datos_banco("5540496698", "Maydely Beatriz Hernandez Gonzalez")},
-    "Luis Violante": {"rol": "Operativo", "alias": "LUIS", "mod": MOD_ESTANDAR, "porc": 20, "sueldo_base_neto": 183.96,
-                      **_datos_banco("5540496566", "Luis Enrique Violante")},
-    "Jessica Lemus": {"rol": "Operativo", "alias": "JESSICA", "mod": MOD_PORCENTAJE, "porc": 20, "sueldo_base_neto": 0.0,
-                      **_datos_banco("5540496558", "Jessica Gabriela Garcia Lemus")},
-    "Mario de Paz": {"rol": "Operativo", "alias": "MARIO", "mod": MOD_ESTANDAR, "porc": 20, "sueldo_base_neto": 183.96,
-                     **_datos_banco("5540496530", "Mario Antonio De Paz Velasquez")},
-    "Dr. Gio Molina": {"rol": "Administrativo", "alias": "GIO|MARVIN|DOCTOR", "mod": MOD_FIJO, "porc": 0, "sueldo_base_neto": 300.00,
-                       **_datos_banco("5540496680", "Marvin Giovanni Molina Flores")},
-    "Gerson Ulises Molina Flores": {"rol": "Administrativo", "alias": "GERSON", "mod": MOD_FIJO, "porc": 0, "sueldo_base_neto": 300.00,
-                                    **_datos_banco("5540496663", "Gerson Ulises Molina Flores")},
-    "Edwin Bartolo Lara Ponce": {"rol": "Administrativo", "alias": "EDWIN", "mod": MOD_FIJO, "porc": 0, "sueldo_base_neto": 300.00,
-                                 "cargo": "Vendedor", "dui": "04182355-6", **_datos_banco("5540496670", "Edwin Bartolo Ponce Lara")},
+    "Maydely Hernández": {"rol": "Operativo", "alias": "MAYDELY", "mod": MOD_ESTANDAR, "porc": 20, "sueldo_base_neto": 183.96},
+    "Luis Violante": {"rol": "Operativo", "alias": "LUIS", "mod": MOD_ESTANDAR, "porc": 20, "sueldo_base_neto": 183.96},
+    "Jessica Lemus": {"rol": "Operativo", "alias": "JESSICA", "mod": MOD_PORCENTAJE, "porc": 20, "sueldo_base_neto": 0.0},
+    "Mario de Paz": {"rol": "Operativo", "alias": "MARIO", "mod": MOD_ESTANDAR, "porc": 20, "sueldo_base_neto": 183.96},
+    "Dr. Gio Molina": {"rol": "Administrativo", "alias": "GIO|MARVIN|DOCTOR", "mod": MOD_FIJO, "porc": 0, "sueldo_base_neto": 300.00},
+    "Gerson Ulises Molina Flores": {"rol": "Administrativo", "alias": "GERSON", "mod": MOD_FIJO, "porc": 0, "sueldo_base_neto": 300.00},
+    "Edwin Bartolo Lara Ponce": {"rol": "Administrativo", "alias": "EDWIN", "mod": MOD_FIJO, "porc": 0, "sueldo_base_neto": 300.00, "cargo": "Vendedor"},
 }
-CAMPOS_EXTRA_EMPLEADO = ("cargo", "correo", "telefono", "dui", "banco", "cuenta", "titular", "fecha_ingreso")
+CAMPOS_EXTRA_EMPLEADO = ("cargo", "correo", "telefono", "dui", "banco", "cuenta", "titular", "fecha_ingreso", "negocio")
 
-# Cambios de personal que la app aplica una sola vez a la hoja "Personal" (altas nuevas y datos bancarios).
-# "crear": False → solo actualiza a la persona si existe; nunca la agrega.
+# Cambios de personal que la app aplica una sola vez a la hoja «Personal».
 ALTAS_PENDIENTES = [
     {"clave": "alta_edwin_04182355-6", "nombre": "Edwin Bartolo Lara Ponce", "buscar": ("EDWIN", "PONCE"),
      "igualar_sueldo_a": ("Gerson Ulises Molina Flores", "Dr. Gio Molina"),
-     "datos": {"rol": "Administrativo", "alias": "EDWIN", "mod": MOD_FIJO, "porc": 0, "sueldo_base_neto": 300.00,
-               "cargo": "Vendedor", "dui": "04182355-6"}},
-] + [{"clave": f"cuenta_davivienda_{cuenta}", "buscar": buscar, "crear": False, "datos": _datos_banco(cuenta, titular)}
-     for buscar, cuenta, titular in CUENTAS_DAVIVIENDA]
+     "datos": {"rol": "Administrativo", "alias": "EDWIN", "mod": MOD_FIJO, "porc": 0, "sueldo_base_neto": 300.00, "cargo": "Vendedor"}},
+]
 
 
 def sueldo_neto_por_defecto(rol):
@@ -537,64 +592,90 @@ def _empleado_normalizado(info):
 
 
 def cargar_empleados():
+    """Personal desde Google Sheets. Si Sheets está configurado pero falla, NO se usan datos de arranque para escribir encima."""
+    por_defecto = {k: _empleado_normalizado(v) for k, v in EMPLEADOS_POR_DEFECTO.items()}
+    if not sheets_configurado():
+        _marcar_carga("Personal", "local")
+        return por_defecto, "Datos locales"
     worksheet = conectar_gsheets("Personal")
-    if worksheet:
-        try:
-            emp_dict = {}
-            for r in _leer_registros(worksheet):
-                nombre = _texto(r.get("Nombre"))
-                if not nombre:
-                    continue
-                rol = normalizar_rol(r.get("Rol", "Operativo"))
-                emp_dict[nombre] = _empleado_normalizado({
-                    "rol": rol, "alias": r.get("Alias", ""), "mod": r.get("Modalidad", "Fijo"),
-                    "porc": r.get("Porcentaje", 0), "sueldo_base_neto": _leer_sueldo_neto(r, rol),
-                    "cargo": r.get("Cargo", ""), "correo": r.get("Correo", ""), "telefono": r.get("Telefono", ""),
-                    "dui": r.get("DUI", ""), "banco": r.get("Banco", ""), "cuenta": r.get("Cuenta", ""),
-                    "titular": r.get("Titular_Cuenta", ""), "fecha_ingreso": r.get("Fecha_Ingreso", ""),
-                })
-            if emp_dict:
-                return emp_dict, "Google Sheets"
-        except Exception:
-            pass
-    return {k: _empleado_normalizado(v) for k, v in EMPLEADOS_POR_DEFECTO.items()}, "Datos locales"
+    if worksheet is None:
+        _marcar_carga("Personal", "error")
+        return por_defecto, "Sin conexión (solo lectura)"
+    try:
+        registros = _leer_registros(worksheet)
+    except Exception:
+        _marcar_carga("Personal", "error")
+        return por_defecto, "Sin conexión (solo lectura)"
+    _marcar_carga("Personal", "ok")
+    emp_dict = {}
+    for r in registros:
+        nombre = _texto(r.get("Nombre"))
+        if not nombre:
+            continue
+        rol = normalizar_rol(r.get("Rol", "Operativo"))
+        emp_dict[nombre] = _empleado_normalizado({
+            "rol": rol, "alias": r.get("Alias", ""), "mod": r.get("Modalidad", "Fijo"),
+            "porc": r.get("Porcentaje", 0), "sueldo_base_neto": _leer_sueldo_neto(r, rol),
+            "cargo": r.get("Cargo", ""), "correo": r.get("Correo", ""), "telefono": r.get("Telefono", ""),
+            "dui": r.get("DUI", ""), "banco": r.get("Banco", ""), "cuenta": r.get("Cuenta", ""),
+            "titular": r.get("Titular_Cuenta", ""), "fecha_ingreso": r.get("Fecha_Ingreso", ""), "negocio": r.get("Negocio", ""),
+        })
+    if emp_dict:
+        return emp_dict, "Google Sheets"
+    return por_defecto, "Datos locales (hoja vacía)"
+
+
+ENCABEZADOS_PERSONAL = ["Nombre", "Cargo", "Rol", "Alias", "Modalidad", "Porcentaje", "Sueldo_Base_Neto", "Correo", "Telefono", "DUI", "Banco",
+                        "Cuenta", "Titular_Cuenta", "Fecha_Ingreso", "Negocio"]
 
 
 def guardar_empleados(datos):
     if not datos:
         return False
-    filas = [["Nombre", "Cargo", "Rol", "Alias", "Modalidad", "Porcentaje", "Sueldo_Base_Neto", "Correo", "Telefono", "DUI", "Banco", "Cuenta",
-              "Titular_Cuenta", "Fecha_Ingreso"]]
+    filas = [ENCABEZADOS_PERSONAL]
     for nombre, info in datos.items():
         filas.append([_valor_para_sheets(x) for x in [
             nombre, info.get("cargo", ""), info.get("rol", ""), info.get("alias", ""), info.get("mod", ""),
             info.get("porc", 0), sueldo_neto_de(info), info.get("correo", ""), info.get("telefono", ""),
-            info.get("dui", ""), info.get("banco", ""), info.get("cuenta", ""), info.get("titular", ""), info.get("fecha_ingreso", "")]])
+            info.get("dui", ""), info.get("banco", ""), info.get("cuenta", ""), info.get("titular", ""), info.get("fecha_ingreso", ""),
+            info.get("negocio", "")]])
     return _escribir_hoja("Personal", filas)
 
 
-PROVEEDOR_EJEMPLO = {
-    "ID_Proveedor": "1", "Nombre_Proveedor": "JG SUMINISTROS", "Nombre_Contacto": "JULIO CESAR HERNANDEZ",
-    "Telefono_1": "7398 4751", "Telefono_2": "", "Correo": "jgsuministrossv@gmail.com",
-    "Banco": "Banco Cuscatlan", "Cuenta": "325-301-000002077", "Direccion_1": "",
-    "Direccion_2": "San Salvador", "Pais": "El Salvador", "Patrocinador": "",
-    "Valoracion": "50%", "Fecha_Ultima_Rev": "", "Fecha_Prox_Rev": "", "Fecha_Contrato": "", "Fecha_Vencimiento": "",
-    "Fecha_Calif_Riesgo": "", "Fecha_Diligencia": "", "Fecha_Rev_Contrato": "", "Fecha_Aprobacion": "",
-    "Descripcion": "suministros medicos", "Notas": ""
-}
-CAMPOS_PROVEEDOR = list(PROVEEDOR_EJEMPLO.keys())
+# Columnas del directorio de proveedores (sin datos de ejemplo: los proveedores reales viven en Google Sheets)
+CAMPOS_PROVEEDOR = ["ID_Proveedor", "Nombre_Proveedor", "Nombre_Contacto", "Telefono_1", "Telefono_2", "Correo", "Banco", "Cuenta",
+                    "Direccion_1", "Direccion_2", "Pais", "Patrocinador", "Valoracion", "Fecha_Ultima_Rev", "Fecha_Prox_Rev",
+                    "Fecha_Contrato", "Fecha_Vencimiento", "Fecha_Calif_Riesgo", "Fecha_Diligencia", "Fecha_Rev_Contrato",
+                    "Fecha_Aprobacion", "Descripcion", "Notas"]
+
+
+def _hoja_para_leer(nombre_hoja):
+    """(worksheet o None, estado): 'ok' = se puede leer (o la pestaña aún no existe), 'local' = sin Sheets, 'error' = falló."""
+    if not sheets_configurado():
+        return None, "local"
+    doc = _documento()
+    if doc is None:
+        return None, "error"
+    try:
+        return doc.worksheet(nombre_hoja), "ok"
+    except gspread.exceptions.WorksheetNotFound:
+        return None, "ok"
+    except Exception:
+        return None, "error"
 
 
 def cargar_proveedores():
-    worksheet = conectar_gsheets("Proveedores")
-    if worksheet:
+    worksheet, estado = _hoja_para_leer("Proveedores")
+    if worksheet is not None:
         try:
-            records = _leer_registros(worksheet)
-            if records:
-                return records
+            registros = _leer_registros(worksheet)
         except Exception:
-            pass
-    return [dict(PROVEEDOR_EJEMPLO)]
+            estado = "error"
+            registros = []
+    else:
+        registros = []
+    _marcar_carga("Proveedores", estado)
+    return [r for r in registros if any(_texto(v) for v in r.values())]
 
 
 def guardar_proveedores(datos_list, encabezados_si_vacio=None):
@@ -612,10 +693,14 @@ def guardar_proveedores(datos_list, encabezados_si_vacio=None):
 
 def cargar_ajustes():
     ajustes = dict(AJUSTES_POR_DEFECTO)
-    worksheet = conectar_gsheets("Ajustes")
-    if worksheet:
+    worksheet, estado = _hoja_para_leer("Ajustes")
+    if worksheet is not None:
         try:
-            for r in _leer_registros(worksheet):
+            registros = _leer_registros(worksheet)
+        except Exception:
+            estado, registros = "error", []
+        try:
+            for r in registros:
                 clave, valor = _texto(r.get("Clave")), r.get("Valor")
                 if clave not in ajustes:
                     continue
@@ -629,6 +714,7 @@ def cargar_ajustes():
                     ajustes[clave] = _texto(valor)
         except Exception:
             pass
+    _marcar_carga("Ajustes", estado)
     if ajustes["tema"] not in TEMAS:
         ajustes["tema"] = "Índigo"
     return ajustes
@@ -639,42 +725,62 @@ def guardar_ajustes(ajustes):
     return _escribir_hoja("Ajustes", filas)
 
 
+# --- Almacén de los módulos administrativos (filas que solo se agregan; ver nucleo/almacen.py) ---
+DIR_DATOS = os.environ.get("GIO_DIR_DATOS") or os.path.join(os.path.dirname(os.path.abspath(__file__)), ".datos_locales")
+SIN_LOGIN = "Administración (sin inicio de sesión)"
+
+
+def nombre_usuario_actual():
+    u = st.session_state.get("usuario_sesion")
+    return (u or {}).get("nombre") or SIN_LOGIN
+
+
+def obtener_almacen():
+    ss = st.session_state
+    alm = ss.get("_almacen")
+    if alm is None:
+        backend = BackendSheets(_abrir_documento) if sheets_configurado() else None
+        alm = Almacen(backend, ColaPendientes.compartida(os.path.join(DIR_DATOS, "pendientes.jsonl")))
+        ss["_almacen"] = alm
+    alm.usuario = nombre_usuario_actual()
+    return alm
+
+
+def leer_tabla(tabla, forzar=False):
+    return obtener_almacen().leer(tabla, forzar=forzar)
+
+
 def cargar_auditoria():
-    worksheet = conectar_gsheets("Auditoria")
-    if worksheet:
-        try:
-            return [{"Fecha": _texto(r.get("Fecha")), "Tipo Documento": _texto(r.get("Tipo Documento")),
-                     "Destinatario": _texto(r.get("Destinatario"))} for r in _leer_registros(worksheet)]
-        except Exception:
-            pass
-    return []
-
-
-def _auditoria_a_sheets(registro):
-    worksheet = conectar_gsheets("Auditoria", crear=True)
-    if not worksheet:
-        return
-    try:
-        if not st.session_state.get("_aud_encabezado"):
-            if not worksheet.row_values(1):
-                worksheet.update(values=[["Fecha", "Tipo Documento", "Destinatario"]], range_name="A1")
-            st.session_state["_aud_encabezado"] = True
-        worksheet.append_row([registro["Fecha"], registro["Tipo Documento"], registro["Destinatario"]])
-    except Exception:
-        pass
+    return [{"Fecha": _texto(r.get("Fecha")), "Tipo Documento": _texto(r.get("Tipo Documento")),
+             "Destinatario": _texto(r.get("Destinatario")), "Usuario": _texto(r.get("Usuario"))} for r in leer_tabla("Auditoria")]
 
 
 def cargar_historial_planillas():
     """Planillas guardadas en la hoja 'Historial_Planillas'. None si no hay conexión."""
-    worksheet = conectar_gsheets("Historial_Planillas")
-    if worksheet is None:
+    worksheet, estado = _hoja_para_leer("Historial_Planillas")
+    if estado != "ok":
         return None
+    if worksheet is None:
+        return []
     try:
         if not worksheet.row_values(1):
             return []
         return _leer_registros(worksheet)
     except Exception:
         return None
+
+
+def historial_planillas_cache(forzar=False):
+    """Historial de planillas con caché de sesión (60 s). Lista vacía si no hay conexión."""
+    ss = st.session_state
+    marca = ss.get("_hist_cache_t", 0)
+    if forzar or "hist_cache" not in ss or time.monotonic() - marca > 60:
+        ss["hist_cache"] = cargar_historial_planillas()
+        ss["_hist_cache_t"] = time.monotonic()
+    datos = ss.get("hist_cache")
+    if datos is None:
+        return [f for filas_h in ss.get("historial_local", {}).values() for f in filas_h]
+    return datos
 
 
 def es_mismo_periodo(registro, periodo, rango):
@@ -685,7 +791,8 @@ def es_mismo_periodo(registro, periodo, rango):
 
 
 def guardar_historial_planilla(filas_nuevas, periodo):
-    """Guarda la planilla del período (si el período ya existía, se reemplaza para no duplicar)."""
+    """Guarda la planilla del período. Si el período ya existía, la versión anterior se copia primero a
+    «Historial_Planillas_Versiones» (nada se pierde) y luego se reemplaza sin borrar la hoja."""
     worksheet = conectar_gsheets("Historial_Planillas", crear=True)
     if worksheet is None:
         return False
@@ -693,15 +800,24 @@ def guardar_historial_planilla(filas_nuevas, periodo):
     rango = (_texto(primera.get("Desde")), _texto(primera.get("Hasta")))
     try:
         existentes = _leer_registros(worksheet) if worksheet.row_values(1) else []
-        conservar = [r for r in existentes if not es_mismo_periodo(r, periodo, rango)]
-        filas = [ENCABEZADOS_HISTORIAL]
-        filas += [[_valor_para_sheets(r.get(c, "")) for c in ENCABEZADOS_HISTORIAL] for r in conservar]
-        filas += [[_valor_para_sheets(f.get(c, "")) for c in ENCABEZADOS_HISTORIAL] for f in filas_nuevas]
-        worksheet.clear()
-        worksheet.update(values=filas, range_name="A1")
-        return True
     except Exception:
         return False
+    conservar = [r for r in existentes if not es_mismo_periodo(r, periodo, rango)]
+    reemplazadas = [r for r in existentes if es_mismo_periodo(r, periodo, rango)]
+    if reemplazadas:
+        try:
+            archivo = BackendSheets(_abrir_documento)
+            marca = ahora_sv().strftime("%Y-%m-%d %H:%M:%S")
+            archivo.agregar("Historial_Planillas_Versiones", ["Archivado"] + ENCABEZADOS_HISTORIAL,
+                            [dict(r, Archivado=marca) for r in reemplazadas])
+        except Exception:
+            return False  # sin copia de la versión anterior no se reemplaza nada
+    columnas = list(ENCABEZADOS_HISTORIAL) + [c for r in existentes for c in r.keys() if c and c not in ENCABEZADOS_HISTORIAL]
+    columnas = list(dict.fromkeys(columnas))
+    filas = [columnas]
+    filas += [[_valor_para_sheets(r.get(c, "")) for c in columnas] for r in conservar]
+    filas += [[_valor_para_sheets(f.get(c, "")) for c in columnas] for f in filas_nuevas]
+    return _escribir_hoja("Historial_Planillas", filas)
 
 
 def preparar_hoja_calculo():
@@ -728,17 +844,21 @@ def preparar_hoja_calculo():
         "Proveedores": guardar_proveedores(ss["proveedores"], encabezados_si_vacio=CAMPOS_PROVEEDOR),
         "Ajustes": guardar_ajustes(ss["ajustes"]),
     }
-    for hoja, encabezados in (("Auditoria", ["Fecha", "Tipo Documento", "Destinatario"]), ("Historial_Planillas", ENCABEZADOS_HISTORIAL)):
-        ok = False
-        worksheet = conectar_gsheets(hoja, crear=True)
-        if worksheet is not None:
-            try:
-                if not worksheet.row_values(1):
-                    worksheet.update(values=[encabezados], range_name="A1")
-                ok = True
-            except Exception:
-                ok = False
-        resultados[hoja] = ok
+    worksheet = conectar_gsheets("Historial_Planillas", crear=True)
+    try:
+        if worksheet is not None and not worksheet.row_values(1):
+            worksheet.update(values=[ENCABEZADOS_HISTORIAL], range_name="A1")
+        resultados["Historial_Planillas"] = worksheet is not None
+    except Exception:
+        resultados["Historial_Planillas"] = False
+    # Pestañas de los módulos administrativos: se crean con sus encabezados (o se agregan las columnas que falten)
+    backend = BackendSheets(_abrir_documento)
+    for tabla, encabezados in TABLAS.items():
+        try:
+            backend.leer(tabla, encabezados)
+            resultados[tabla] = True
+        except Exception:
+            resultados[tabla] = False
     return resultados
 
 
@@ -937,6 +1057,11 @@ def notificar_error(msg):
     st.session_state["_errores"].append(msg)
 
 
+def notificar_aviso(msg):
+    """Aviso amarillo que se muestra arriba en la siguiente recarga (p. ej., «quedó pendiente de sincronizar»)."""
+    st.session_state.setdefault("_avisos", []).append(msg)
+
+
 def mostrar_notificaciones():
     pendientes = st.session_state.get("_toasts", [])
     st.session_state["_toasts"] = []
@@ -946,6 +1071,10 @@ def mostrar_notificaciones():
     st.session_state["_errores"] = []
     for msg in errores:
         st.error(msg)
+    avisos = st.session_state.get("_avisos", [])
+    st.session_state["_avisos"] = []
+    for msg in avisos:
+        st.warning(msg)
 
 
 def campo_persistente(widget_fn, label, state_key, ui_key, conv=None, **kwargs):
@@ -969,9 +1098,13 @@ def reiniciar_widgets_planilla(prefijos=("ui_b_net_", "ui_c_")):
 
 
 def registrar_auditoria(tipo, destinatario):
+    """Bitácora: queda en la pestaña «Auditoria» (o en la cola de pendientes si no hay conexión). Devuelve el Resultado."""
     registro = {"Fecha": ahora_sv().strftime('%Y-%m-%d %H:%M:%S'), "Tipo Documento": tipo, "Destinatario": destinatario}
-    st.session_state["historial_auditoria"].append(registro)
-    _auditoria_a_sheets(registro)
+    resultado = obtener_almacen().registrar("Auditoria", registro, verificar=False)
+    fila = dict(resultado.registro or registro)
+    st.session_state["historial_auditoria"].append({"Fecha": fila.get("Fecha"), "Tipo Documento": tipo, "Destinatario": destinatario,
+                                                    "Usuario": fila.get("Usuario", nombre_usuario_actual())})
+    return resultado
 
 
 # =====================================================================
@@ -1760,6 +1893,16 @@ def aplicar_reporte(rep, quincenas_manual=None):
     df_reporte["_COLAB"] = ""
     df_reporte["_N_COINC"] = 0
     lista_ex, resumen, indices_por_colab = [], {}, {}
+    avisos_alias = []
+    mascaras = {}
+    for emp, info in ss["empleados"].items():
+        patron = patron_alias(alias_efectivo(emp, info))
+        mascara, avisos = mascara_alias(df_reporte["_PROF_N"], patron)
+        avisos_alias += [f"{emp}: «{a}»" for a in avisos]
+        df_reporte.loc[mascara, "_N_COINC"] += 1
+        df_reporte.loc[mascara & (df_reporte["_COLAB"] == ""), "_COLAB"] = emp
+        mascaras[emp] = (patron, mascara)
+    meta["alias_parciales"] = avisos_alias
     for emp, info in ss["empleados"].items():
         mod = info.get("mod", "Fijo")
         ss[f"com_{emp}"] = 0.0
@@ -1767,10 +1910,8 @@ def aplicar_reporte(rep, quincenas_manual=None):
         ss[f"ret_pub_{emp}"] = 0.0
         ss[f"base_net_{emp}"] = base_neta_periodo(info)  # sueldo neto quincenal × quincenas del período
 
-        patron = patron_alias(alias_efectivo(emp, info))
-        mascara = df_reporte["_PROF_N"].map(lambda n: coincide_alias(n, patron)).astype(bool)
-        df_reporte.loc[mascara, "_N_COINC"] += 1
-        df_reporte.loc[mascara & (df_reporte["_COLAB"] == ""), "_COLAB"] = emp
+        patron, _ = mascaras[emp]
+        mascara = df_reporte["_COLAB"] == emp  # cada servicio se paga a UNA sola persona (aunque dos alias coincidan)
         df_p = df_reporte[mascara]
         indices_por_colab[emp] = [i for i, m in enumerate(mascara.tolist()) if m]
         tot_s = float(df_p[c_pre].sum())
@@ -1787,11 +1928,12 @@ def aplicar_reporte(rep, quincenas_manual=None):
                     lista_ex.append({"Colaborador": emp, "Cliente": _texto(rx[c_cli]) if c_cli else "N/A", "Servicio": _texto(rx[c_ser]) if c_ser else "N/A",
                                      "Precio Final": pr, "Extra Generado": ex, "Retención pauta": ret, "Comisión Neta": com})
                 n_extra = int(len(df_ex))
-                ss[f"extra_bruto_{emp}"] = ex_tot
-                ss[f"ret_pub_{emp}"] = ret_tot
-                ss[f"com_{emp}"] = max(0.0, ex_tot - ret_tot)
+                # Montos a centavos: así el recibo y la planilla siempre suman exactamente el total
+                ss[f"extra_bruto_{emp}"] = round(ex_tot, 2)
+                ss[f"ret_pub_{emp}"] = round(ret_tot, 2)
+                ss[f"com_{emp}"] = round(max(0.0, ex_tot - ret_tot), 2)
             else:
-                ss[f"com_{emp}"] = tot_s * (float(info.get("porc", 20) or 0) / 100.0)
+                ss[f"com_{emp}"] = round(tot_s * (float(info.get("porc", 20) or 0) / 100.0), 2)
         resumen[emp] = {"Alias buscado": patron or "—", "Servicios": int(mascara.sum()), "Ventas": tot_s, "Servicios con extra": n_extra}
 
     ss["detalle_extras"] = lista_ex
@@ -2199,7 +2341,8 @@ def _encabezado_pdf(pdf, subtitulo, color=(10, 25, 47), linea_extra=None):
     pdf.ln(5)
 
 
-def generar_recibo_pdf(e_dat, periodo_texto):
+def generar_recibo_pdf(e_dat, periodo_texto, extras=None):
+    """Recibo de pago. extras (opcional): fila del resumen integrado con ajustes, anticipos, cuotas, neto, entregado y pendiente."""
     class PDF(FPDF):
         def header(self):
             _encabezado_pdf(self, 'Comprobante Oficial de Pago', linea_extra=f"Periodo Liquidado: {periodo_texto}")
@@ -2228,7 +2371,25 @@ def generar_recibo_pdf(e_dat, periodo_texto):
         pdf.cell(130, 8, limpiar_texto_pdf(f"  (-) {aj('renta_pct'):g}% Retención de Renta"), 1, 0, 'L'); pdf.cell(60, 8, f"-${e_dat['Renta']:,.2f}", 1, 1, 'R')
 
     pdf.set_font('helvetica', 'B', 11); pdf.set_fill_color(243, 244, 246); pdf.set_text_color(10, 25, 47)
-    pdf.cell(130, 10, limpiar_texto_pdf("  TOTAL LÍQUIDO A RECIBIR"), 1, 0, 'L', fill=True); pdf.cell(60, 10, f"${e_dat['Total']:,.2f}", 1, 1, 'R', fill=True)
+    pdf.cell(130, 10, limpiar_texto_pdf("  TOTAL LÍQUIDO A RECIBIR" if not extras else "  TOTAL DE LA PLANILLA"), 1, 0, 'L', fill=True)
+    pdf.cell(60, 10, f"${e_dat['Total']:,.2f}", 1, 1, 'R', fill=True)
+
+    if extras:
+        pdf.set_font('helvetica', '', 10)
+        lineas = [("(+/-) Ajustes documentados", extras.get("Ajustes", 0.0), (50, 50, 50)),
+                  ("(-) Anticipos aplicados", -float(extras.get("Anticipos", 0.0) or 0.0), (201, 42, 42)),
+                  ("(-) Cuotas de préstamo aplicadas", -float(extras.get("Cuotas_Prestamo", 0.0) or 0.0), (201, 42, 42))]
+        for etiqueta, valor, color in lineas:
+            if abs(float(valor or 0.0)) >= 0.005:
+                pdf.set_text_color(*color)
+                pdf.cell(130, 8, limpiar_texto_pdf(f"  {etiqueta}"), 1, 0, 'L'); pdf.cell(60, 8, f"{'-' if valor < 0 else ''}${abs(valor):,.2f}", 1, 1, 'R')
+        pdf.set_font('helvetica', 'B', 11); pdf.set_text_color(10, 25, 47); pdf.set_fill_color(238, 242, 255)
+        pdf.cell(130, 9, limpiar_texto_pdf("  NETO A ENTREGAR"), 1, 0, 'L', fill=True); pdf.cell(60, 9, f"${float(extras.get('Neto', 0.0)):,.2f}", 1, 1, 'R', fill=True)
+        pdf.set_font('helvetica', '', 10); pdf.set_text_color(50, 50, 50)
+        pdf.cell(130, 8, limpiar_texto_pdf("  Entregado a la fecha"), 1, 0, 'L'); pdf.cell(60, 8, f"${float(extras.get('Entregado', 0.0)):,.2f}", 1, 1, 'R')
+        pdf.cell(130, 8, limpiar_texto_pdf("  Pendiente por entregar"), 1, 0, 'L'); pdf.cell(60, 8, f"${float(extras.get('Pendiente', 0.0)):,.2f}", 1, 1, 'R')
+        pdf.set_font('helvetica', 'I', 8); pdf.set_text_color(110, 110, 110)
+        pdf.multi_cell(0, 5, limpiar_texto_pdf(f"Estado del pago: {extras.get('Estado', '')}. Los anticipos y cuotas se descuentan una sola vez y quedan registrados con su referencia."), 0, 'L')
 
     notas_val = str(e_dat.get('Notas', 'Ninguno')).strip()
     if not notas_val or notas_val.lower() == 'ninguno': notas_val = "Sin notas adicionales"
@@ -2237,6 +2398,10 @@ def generar_recibo_pdf(e_dat, periodo_texto):
     pdf.cell(0, 7, "  Notas del Registro:", 0, 1, 'L', fill=True)
     pdf.set_font('helvetica', '', 10); pdf.set_text_color(50, 50, 50)
     pdf.multi_cell(0, 6, limpiar_texto_pdf(f"  {notas_val}"), 0, 'L')
+    pdf.ln(4)
+    pdf.set_font('helvetica', '', 9); pdf.set_text_color(70, 70, 70)
+    pdf.multi_cell(0, 5, limpiar_texto_pdf("Constancia de recepción: recibí conforme la cantidad indicada como entregada en este comprobante."), 0, 'L')
+    _firmas_pdf(pdf, "Entregado por: Administración", f"Recibí conforme: {e_dat['Colaborador']}")
     return generar_pdf_bytes(pdf)
 
 
@@ -2650,8 +2815,52 @@ def quitar_logo():
     notificar("Logo quitado. Recuerda guardar los ajustes en Google Sheets.", "🖼️")
 
 
+def sugerir_colaborador(titular, empleados):
+    """Colaborador que corresponde al nombre del titular bancario (primer nombre + apellidos en común). '' si es dudoso."""
+    tokens = [t for t in re.findall(r"[A-Z]+", _normalizar(titular)) if len(t) > 1]
+    if not tokens:
+        return ""
+    puntajes = []
+    for nombre, info in empleados.items():
+        propios = set(re.findall(r"[A-Z]+", _normalizar(nombre))) | set(re.findall(r"[A-Z]+", _normalizar(info.get("alias"))))
+        propios |= set(re.findall(r"[A-Z]+", _normalizar(info.get("titular"))))
+        puntaje = (3 if tokens[0] in propios else 0) + len(set(tokens) & propios)
+        puntajes.append((puntaje, nombre))
+    puntajes.sort(reverse=True)
+    if not puntajes or puntajes[0][0] < 3 or (len(puntajes) > 1 and puntajes[1][0] == puntajes[0][0]):
+        return ""
+    return puntajes[0][1]
+
+
+def leer_lineas_banco(texto):
+    """Líneas 'cuenta,monto,nombre' (el formato del archivo de Davivienda) → [{'Cuenta', 'Titular'}]."""
+    filas = []
+    for linea in _texto(texto).replace("\r", "\n").split("\n"):
+        partes = [p.strip() for p in linea.split(",")]
+        if len(partes) < 3:
+            continue
+        cuenta = cuenta_banco(partes[0])
+        titular = ",".join(partes[2:]).strip()
+        if cuenta.isdigit() and titular:
+            filas.append({"Cuenta": cuenta, "Titular": titular})
+    return filas
+
+
+def registrar_cambios_expediente(anteriores, nuevos):
+    """Historial automático de cambios de cargo, sueldo y forma de pago (y altas/bajas) en la pestaña «Expediente»."""
+    try:
+        registros = per.cambios_personal(anteriores, nuevos, sueldo_neto_de)
+    except fin.ErrorNegocio:
+        return
+    if registros:
+        resultado = obtener_almacen().registrar_varios("Expediente", registros, verificar=False)
+        if resultado.pendiente:
+            notificar_aviso("El historial de cambios del personal quedó pendiente de sincronizar con Google Sheets.")
+
+
 def _aplicar_cambios_personal(nuevos, recalcular=(), guardar=True):
     ss = st.session_state
+    registrar_cambios_expediente(ss.get("empleados", {}), nuevos)
     ss["empleados"] = nuevos
     for emp in recalcular:
         ss.pop(f"base_net_{emp}", None)
@@ -2788,7 +2997,7 @@ def guardar_form_empleado():
         "rol": rol, "mod": mod, "porc": porc, "alias": ss.get("fe_alias"), "sueldo_base_neto": sueldo,
         "cargo": ss.get("fe_cargo"), "correo": correo, "telefono": ss.get("fe_telefono"), "dui": ss.get("fe_dui"),
         "banco": ss.get("fe_banco"), "cuenta": cuenta_banco(ss.get("fe_cuenta")), "titular": ss.get("fe_titular"),
-        "fecha_ingreso": ss.get("fe_fecha_ingreso"),
+        "fecha_ingreso": ss.get("fe_fecha_ingreso"), "negocio": ss.get("fe_negocio"),
     })
     if es_nuevo:
         nuevos = dict(ss["empleados"])
@@ -2864,6 +3073,12 @@ auth_uri = "https://accounts.google.com/o/oauth2/auth"
 token_uri = "https://oauth2.googleapis.com/token"
 auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
 client_x509_cert_url = "..."
+
+# Inicio de sesión: genera cada bloque en Configuración → Seguridad y usuarios
+# [usuarios.gerencia]
+# nombre = "Gerencia General"
+# rol = "admin"
+# clave = "pbkdf2_sha256$260000$...$..."
 """
 
 GUIA_CONEXION_HTML = (
@@ -2874,58 +3089,170 @@ GUIA_CONEXION_HTML = (
     "<li><b>Comparte la hoja.</b> En tu hoja de cálculo pulsa «Compartir» y agrega el correo de la cuenta de servicio (termina en <code>iam.gserviceaccount.com</code>) como <b>Editor</b>.</li>"
     "<li><b>Prepara Gmail.</b> Activa la verificación en dos pasos de tu cuenta y crea una «Contraseña de aplicación»: esas 16 letras van en <code>EMAIL_PASS</code>.</li>"
     "<li><b>Pega los secretos.</b> En Streamlit Cloud abre tu app → ⋮ → <b>Settings → Secrets</b>, pega la plantilla de abajo con tus datos y guarda. Nunca subas estos datos a GitHub.</li>"
-    "<li><b>Conecta y prepara.</b> Vuelve aquí, pulsa «Reintentar conexión» y luego «Preparar hoja de cálculo»: la app crea las pestañas Personal, Proveedores, Ajustes, Auditoria e Historial_Planillas.</li>"
+    "<li><b>Conecta y prepara.</b> Vuelve aquí, pulsa «Reintentar conexión» y luego «Preparar hoja de cálculo»: la app crea las pestañas Personal, Proveedores, Ajustes, Auditoria, Historial_Planillas y las de los módulos administrativos (pagos, anticipos, préstamos, asistencia, horarios, expediente, caja y cuentas por pagar).</li>"
     "</ol></div>"
 )
 
+
+# =====================================================================
+# 14b. SESIÓN, PERMISOS Y CONTEXTO DE LAS PÁGINAS ADMINISTRATIVAS
+# =====================================================================
+USUARIOS = seg.cargar_usuarios(secreto("usuarios"))
+
+
+def usuario_actual():
+    u = st.session_state.get("usuario_sesion")
+    if u:
+        return u
+    return {"usuario": "admin", "nombre": SIN_LOGIN, "rol": "admin", "colaborador": ""}
+
+
+def es_admin():
+    return usuario_actual().get("rol") == "admin"
+
+
+def cerrar_sesion():
+    for k in ("usuario_sesion", "_almacen", "pagina"):
+        st.session_state.pop(k, None)
+
+
+def menu_del_usuario():
+    return MENU if es_admin() else MENU_OPERATIVO
+
+
+def paginas_permitidas():
+    return [p for _, items in menu_del_usuario() for p, _, _ in items]
+
+
+def lista_ajuste(clave):
+    return [x.strip() for x in _texto(aj(clave)).split(",") if x.strip()]
+
+
+def negocio_de():
+    return {n: _texto(i.get("negocio")) for n, i in st.session_state["empleados"].items()}
+
+
+def periodos_historial():
+    claves = []
+    for r in historial_planillas_cache():
+        c = clave_de_fila_historial(r)
+        if c and c not in claves:
+            claves.append(c)
+    return sorted(claves, reverse=True)
+
+
+def calculado_periodo(clave):
+    """({colaborador: total de la planilla}, guardado). Usa la planilla guardada; si no existe y es el período del PDF actual, el cálculo actual."""
+    guardadas = planilla_guardada(clave)
+    if guardadas:
+        total = {}
+        for r in guardadas:
+            total[_texto(r.get("Colaborador"))] = round(total.get(_texto(r.get("Colaborador")), 0.0) + float(_a_numero(r.get("Total")) or 0.0), 2)
+        return total, True
+    if clave and clave == periodo_clave_actual() and st.session_state.get("pdf_ok"):
+        return {f["Colaborador"]: round(float(f["Total"]), 2) for f in calcular_planilla()}, False
+    return {}, False
+
+
+CTX = SimpleNamespace(
+    md=lambda contenido, destino=None: md(contenido, destino), tarjeta=lambda n: tarjeta(n), zona=lambda c: zona(c), chip=lambda t, c="": chip(t, c),
+    kpi_html=lambda *a, **k: kpi_html(*a, **k), fila_kpis=lambda items: fila_kpis(items), titulo_seccion=lambda t, s="": titulo_seccion(t, s),
+    encabezado_pagina=lambda i, t, s="": encabezado_pagina(i, t, s), espacio=lambda px=10: espacio(px), columnas=lambda s, a=None: columnas(s, a),
+    ancho=ancho, usd=usd, aj=aj, tema=tema, img_logo=lambda: img_logo(), estilo_plotly=lambda f, h=360: estilo_plotly(f, h), PLOTLY_CONFIG=PLOTLY_CONFIG,
+    limpiar_texto_pdf=limpiar_texto_pdf, encabezado_pdf=lambda pdf, sub, **k: _encabezado_pdf(pdf, sub, **k),
+    almacen=obtener_almacen, leer=leer_tabla, usuario=usuario_actual, es_admin=es_admin, registrar_auditoria=lambda t, d: registrar_auditoria(t, d),
+    notificar=lambda m, i="✅": notificar(m, i), notificar_error=lambda m: notificar_error(m), notificar_aviso=lambda m: notificar_aviso(m),
+    empleados=lambda: st.session_state["empleados"], negocio_de=negocio_de, lista=lista_ajuste,
+    hoy=lambda: ahora_sv().date(), ahora=lambda: ahora_sv().replace(tzinfo=None, microsecond=0),
+    periodo_actual=lambda: (periodo_clave_actual(), st.session_state.get("periodo_texto", "")) if st.session_state.get("pdf_ok") else ("", ""),
+    periodos_historial=periodos_historial, historial=lambda: historial_planillas_cache(), clave_de_fila=lambda r: clave_de_fila_historial(r),
+    calculado_periodo=calculado_periodo, proveedores=lambda: st.session_state.get("proveedores", []),
+    auditoria=lambda: st.session_state.get("historial_auditoria", []),
+)
 
 
 # =====================================================================
 # 15. ESTILOS + MENÚ LATERAL + NAVEGACIÓN EN TELÉFONO
 # =====================================================================
 md(css_tema() + CSS_BASE)
+if USUARIOS and not st.session_state.get("usuario_sesion"):
+    v_seguridad.pantalla_login(CTX, USUARIOS)
+    st.stop()
 mostrar_notificaciones()
+if st.session_state["pagina"] not in paginas_permitidas():
+    st.session_state["pagina"] = paginas_permitidas()[0]
+
+
+def sincronizar_pendientes():
+    resumen = obtener_almacen().sincronizar()
+    if resumen["enviados"] or resumen["descartados"]:
+        notificar(f"Sincronizado: {resumen['enviados']} operación(es) enviadas a Google Sheets"
+                  + (f", {resumen['descartados']} ya estaban guardadas" if resumen["descartados"] else "") + ".", "☁️")
+    if resumen["fallidos"]:
+        notificar_error(f"{resumen['fallidos']} operación(es) siguen pendientes: " + "; ".join(resumen["errores"])[:400])
+
 
 with st.sidebar:
     md(f"<div class='brand'><img src='{img_logo()}' alt=''/><div><div class='brand-name'>{html.escape(aj('empresa_corto'))}</div>"
        "<div class='brand-sub'>Suite administrativa</div></div></div>")
-    for seccion, items in MENU:
+    for seccion, items in menu_del_usuario():
         md(f"<div class='nav-sec'>{seccion}</div>")
-        with zona(f"nav_{_normalizar(seccion).lower()}"):
+        with zona(f"nav_{_normalizar(seccion).lower().replace(' ', '_')}"):
             for clave_pag, icono, etiqueta in items:
                 st.button(f"{icono}  {etiqueta}", key=f"navbtn_{clave_pag}", on_click=ir_a, args=(clave_pag,),
                           type="primary" if st.session_state["pagina"] == clave_pag else "secondary", **ancho(st.button))
 
     if "sheets_ok" not in st.session_state:
         st.session_state["sheets_ok"] = _documento() is not None
+    pendientes_sync = len(obtener_almacen().pendientes())
     estado_sheets = "<span class='dot on'></span><b>Conectado</b>" if st.session_state["sheets_ok"] else "<span class='dot off'></span><b>Modo local</b>"
-    estado_pdf = "<span class='dot on'></span><b>Sincronizado</b>" if st.session_state["pdf_ok"] else "<span class='dot off'></span><b>Pendiente</b>"
-    pi_side = st.session_state.get("periodo_info")
-    periodo_side = html.escape(pi_side["etiqueta"]) if pi_side else "Sin reporte"
-    md(f"<div class='side-card'><div class='side-title'>Estado del sistema</div>"
-       f"<div class='side-row'><span>Google Sheets</span><span>{estado_sheets}</span></div>"
-       f"<div class='side-row'><span>Reporte de ventas</span><span>{estado_pdf}</span></div>"
-       f"<div class='side-row'><span>Período</span><b>{periodo_side}</b></div>"
-       f"<div class='side-row'><span>Quincenas a pagar</span><b>{st.session_state['quincenas_multiplicador']:g}</b></div>"
-       f"<div class='side-row'><span>Colaboradores</span><b>{len(st.session_state['empleados'])}</b></div></div>")
-    md("<div class='profile'><div class='avatar'>AD</div><div><div class='profile-name'>Administración</div><div class='profile-role'>Gerencia General</div></div></div>"
-       "<div class='version'>Suite administrativa · v4.1</div>")
+    estado_sync = ("<span class='dot on'></span><b>Al día</b>" if not pendientes_sync
+                   else f"<span class='dot off'></span><b>{pendientes_sync} pendiente(s)</b>")
+    if es_admin():
+        estado_pdf = "<span class='dot on'></span><b>Sincronizado</b>" if st.session_state["pdf_ok"] else "<span class='dot off'></span><b>Pendiente</b>"
+        pi_side = st.session_state.get("periodo_info")
+        periodo_side = html.escape(pi_side["etiqueta"]) if pi_side else "Sin reporte"
+        md(f"<div class='side-card'><div class='side-title'>Estado del sistema</div>"
+           f"<div class='side-row'><span>Google Sheets</span><span>{estado_sheets}</span></div>"
+           f"<div class='side-row'><span>Respaldo de operaciones</span><span>{estado_sync}</span></div>"
+           f"<div class='side-row'><span>Reporte de ventas</span><span>{estado_pdf}</span></div>"
+           f"<div class='side-row'><span>Período</span><b>{periodo_side}</b></div>"
+           f"<div class='side-row'><span>Quincenas a pagar</span><b>{st.session_state['quincenas_multiplicador']:g}</b></div>"
+           f"<div class='side-row'><span>Colaboradores</span><b>{len(st.session_state['empleados'])}</b></div></div>")
+    else:
+        md(f"<div class='side-card'><div class='side-row'><span>Conexión</span><span>{estado_sheets}</span></div>"
+           f"<div class='side-row'><span>Marcaciones</span><span>{estado_sync}</span></div></div>")
+    if pendientes_sync:
+        st.button("☁️ Sincronizar pendientes", on_click=sincronizar_pendientes, key="btn_sync_lateral", **ancho(st.button),
+                  disabled=not sheets_configurado(), help="Envía a Google Sheets las operaciones que quedaron guardadas solo en este equipo, sin duplicarlas.")
+    u = usuario_actual()
+    rol_txt = seg.ROLES.get(u.get("rol"), "")
+    md(f"<div class='profile'><div class='avatar'>{html.escape(_iniciales(u.get('nombre')))}</div><div><div class='profile-name'>{html.escape(u.get('nombre', ''))}</div>"
+       f"<div class='profile-role'>{html.escape(rol_txt) if USUARIOS else 'Sin inicio de sesión'}</div></div></div>")
+    if USUARIOS:
+        st.button("🚪 Cerrar sesión", on_click=cerrar_sesion, key="btn_logout", **ancho(st.button))
+    md("<div class='version'>Suite administrativa · v5</div>")
 
 
 def nav_movil():
     """En el teléfono el menú lateral queda oculto: esta barra permite cambiar de sección sin abrirlo."""
     ss = st.session_state
+    opciones = paginas_permitidas()
+    if len(opciones) < 2:
+        return
     with zona("navmovil"):
         ss["nav_movil_sel"] = ss["pagina"]
-        if hasattr(st, "pills"):
-            st.pills("Ir a", PAGINAS_VALIDAS, key="nav_movil_sel", format_func=lambda p: ETIQUETAS_PAGINA.get(p, p),
+        if hasattr(st, "pills") and len(opciones) <= 8:
+            st.pills("Ir a", opciones, key="nav_movil_sel", format_func=lambda p: ETIQUETAS_PAGINA.get(p, p),
                      on_change=ir_a_movil, label_visibility="collapsed")
-        else:
-            st.selectbox("Ir a", PAGINAS_VALIDAS, key="nav_movil_sel", format_func=lambda p: ETIQUETAS_PAGINA.get(p, p),
-                         on_change=ir_a_movil, label_visibility="collapsed")
+        else:  # con muchas secciones, un selector de una sola línea no tapa el contenido en el teléfono
+            st.selectbox("Ir a la sección", opciones, key="nav_movil_sel", format_func=lambda p: ETIQUETAS_PAGINA.get(p, p),
+                         on_change=ir_a_movil)
 
 
 nav_movil()
+if es_admin() and not USUARIOS and st.session_state["pagina"] in ("Planillas", "Configuración", "PanelAdmin"):
+    st.warning("🔓 Sin inicio de sesión: cualquier persona con el enlace puede ver salarios y cuentas. Actívalo en Configuración → Seguridad y usuarios.")
 
 
 # =====================================================================
@@ -2991,7 +3318,11 @@ def panel_diagnostico():
                        "Agrégalos como alias en Configuración → Personal y sueldos (por ejemplo MAYDELY|MEY).")
             st.dataframe(pd.DataFrame(meta["sin_asignar"]).style.format({"Ventas": "${:,.2f}"}), hide_index=True, **ancho(st.dataframe))
         if meta.get("multiples"):
-            st.warning(f"{meta['multiples']} servicio(s) coinciden con más de un colaborador: revisa que los alias no se repitan.")
+            st.warning(f"{meta['multiples']} servicio(s) coinciden con más de un colaborador: cada uno se asignó solo a la primera persona de la lista "
+                       "(nunca se paga dos veces). Revisa que los alias no se repitan.")
+        if meta.get("alias_parciales"):
+            st.info("Estos alias solo coinciden como parte de otra palabra (por ejemplo «GIO» dentro de «SERGIO»); revisa que sea la persona correcta: "
+                    + ", ".join(meta["alias_parciales"]))
         if ss.get("reporte_df") is not None:
             md(titulo_seccion("Vista previa de servicios leídos"))
             formatos = {c: "${:,.2f}" for c in ("Precio", "Extra", "Efectivo", "Transferencia", "POS") if c in ss["reporte_df"].columns}
@@ -3023,6 +3354,10 @@ def panel_sincronizacion():
                 with st.spinner("Analizando el reporte de ventas..."):
                     ok, msg = ejecutar_procesamiento()
                 st.toast(msg, icon="✅" if ok else "⚠️")
+                if ok:
+                    recuperados = restaurar_desde_historial()
+                    if recuperados:
+                        st.toast(f"Se recuperaron bonos, descuentos o notas guardados de {recuperados} colaborador(es) para este período.", icon="♻️")
 
         if ss.get("pdf_bytes"):
             pi = ss.get("periodo_info")
@@ -3051,14 +3386,35 @@ def panel_sincronizacion():
     espacio(6)
 
 
+def clave_de_fechas_dmy(desde, hasta):
+    """('01/09/2026', '15/09/2026') → '2026-09-01 al 2026-09-15' (la clave que usan pagos, anticipos y préstamos)."""
+    try:
+        a = datetime.strptime(_texto(desde), "%d/%m/%Y")
+        b = datetime.strptime(_texto(hasta), "%d/%m/%Y")
+    except ValueError:
+        return ""
+    return fin.clave_periodo(a, b)
+
+
+def periodo_clave_actual():
+    pi = st.session_state.get("periodo_info") or {}
+    return clave_de_fechas_dmy(pi.get("inicio"), pi.get("fin")) if pi else ""
+
+
+def clave_de_fila_historial(r):
+    return _texto(r.get("Periodo_Clave")) or clave_de_fechas_dmy(r.get("Desde"), r.get("Hasta"))
+
+
 def filas_historial(datos_emp):
     """Una fila por colaborador con todo lo que se le paga en el período (lo que se guarda en «Historial_Planillas»)."""
     ss = st.session_state
     pi = ss.get("periodo_info") or {}
     guardado = ahora_sv().strftime("%Y-%m-%d %H:%M")
+    clave = periodo_clave_actual()
     filas = []
     for d in datos_emp:
         info = ss["empleados"].get(d["Colaborador"], {})
+        notas = _texto(d.get("Notas"))
         filas.append({
             "Guardado": guardado, "Periodo": ss["periodo_texto"], "Desde": pi.get("inicio", ""), "Hasta": pi.get("fin", ""),
             "Quincenas": float(ss["quincenas_multiplicador"]), "Colaborador": d["Colaborador"], "DUI": _texto(info.get("dui")),
@@ -3067,9 +3423,48 @@ def filas_historial(datos_emp):
             "Ventas": round(float(d["Ventas PDF"]), 2), "Sueldo_Bruto": round(float(d["Base Bruta"]), 2), "Renta": round(float(d["Renta"]), 2),
             "Sueldo_Neto": round(float(d["Base Neta"]), 2), "Extra_Bruto": round(float(d["Extra"]), 2), "Pauta": round(float(d["Ret Pub"]), 2),
             "Comision": round(float(d["Com Neta"]), 2), "Bonos": round(float(d["Bonos"]), 2), "Descuentos": round(float(d["Desc"]), 2),
-            "Total": round(float(d["Total"]), 2),
+            "Total": round(float(d["Total"]), 2), "Periodo_Clave": clave, "Negocio": _texto(info.get("negocio")),
+            "Notas": "" if notas.lower() == "ninguno" else notas, "Usuario": nombre_usuario_actual(),
         })
     return filas
+
+
+def planilla_guardada(clave):
+    """Filas guardadas en Historial_Planillas para ese período (la versión vigente)."""
+    if not clave:
+        return []
+    return [r for r in historial_planillas_cache() if clave_de_fila_historial(r) == clave]
+
+
+def periodo_con_pagos(clave):
+    """True si ya se registraron pagos de sueldo/comisión/bono para ese período: la planilla queda bloqueada."""
+    if not clave:
+        return False
+    return any(_texto(p.get("Periodo")) == clave and _texto(p.get("Concepto")) in fin.CONCEPTOS_PLANILLA
+               for p in fin.pagos_vigentes(leer_tabla("Pagos_Personal")))
+
+
+def restaurar_desde_historial():
+    """Al volver a subir el PDF de un período ya guardado, recupera bonos, descuentos y notas (si en la sesión están vacíos)."""
+    ss = st.session_state
+    filas = planilla_guardada(periodo_clave_actual())
+    if not filas:
+        return 0
+    if any(float(ss.get(f"hex_{e}", 0) or 0) or float(ss.get(f"desc_{e}", 0) or 0) for e in ss["empleados"]):
+        return 0
+    recuperados = 0
+    for r in filas:
+        emp = _texto(r.get("Colaborador"))
+        if emp not in ss["empleados"]:
+            continue
+        bonos, desc = _a_numero(r.get("Bonos")) or 0.0, _a_numero(r.get("Descuentos")) or 0.0
+        ss[f"hex_{emp}"], ss[f"desc_{emp}"] = float(bonos), float(desc)
+        if _texto(r.get("Notas")):
+            ss[f"notas_{emp}"] = _texto(r.get("Notas"))
+        for k in (f"ui_h_{emp}", f"ui_d_{emp}", f"n_{emp}"):
+            ss.pop(k, None)
+        recuperados += int(bool(bonos or desc or _texto(r.get("Notas"))))
+    return recuperados
 
 
 def cuenta_banco(v):
@@ -3125,15 +3520,21 @@ def firma_planilla(filas):
 
 
 def guardar_planilla_actual(filas_h, automatico=False):
-    """Guarda la planilla en la sesión y en Google Sheets. Devuelve True si quedó en la nube."""
+    """Guarda la planilla en la sesión y en Google Sheets. Devuelve True si quedó en la nube.
+    Si el período ya tiene pagos registrados NO se reemplaza: los cambios se documentan como ajustes."""
     ss = st.session_state
     periodo = ss["periodo_texto"]
+    clave = periodo_clave_actual()
+    if periodo_con_pagos(clave):
+        ss["autoguardado_estado"] = {"ok": False, "bloqueado": True, "hora": ahora_sv().strftime("%H:%M"), "periodo": periodo, "auto": automatico}
+        ss["autoguardado_firma"] = firma_planilla(filas_h)
+        return False
     rango = (_texto(filas_h[0].get("Desde")), _texto(filas_h[0].get("Hasta"))) if filas_h else ("", "")
     ss["historial_local"] = {k: v for k, v in ss["historial_local"].items()
                              if not (isinstance(v, list) and v and isinstance(v[0], dict) and es_mismo_periodo(dict(v[0], Periodo=k), periodo, rango))}
     ss["historial_local"][periodo] = filas_h
-    ss.pop("hist_cache", None)
     ok = guardar_historial_planilla(filas_h, periodo) if _documento() is not None else False
+    historial_planillas_cache(forzar=True)
     if ok and (not automatico or ss.get("autoguardado_periodo") != periodo):
         registrar_auditoria("Planilla guardada automáticamente" if automatico else "Planilla guardada en historial", periodo)
     if ok:
@@ -3141,6 +3542,30 @@ def guardar_planilla_actual(filas_h, automatico=False):
     ss["autoguardado_firma"] = firma_planilla(filas_h)
     ss["autoguardado_estado"] = {"ok": ok, "hora": ahora_sv().strftime("%H:%M"), "periodo": periodo, "auto": automatico}
     return ok
+
+
+def guardar_ventas_periodo():
+    """Ventas por e-commerce del período (para el panel administrativo). Solo agrega una versión nueva si cambiaron."""
+    ss = st.session_state
+    rep = ss.get("reporte_df")
+    clave = periodo_clave_actual()
+    if rep is None or rep.empty or not clave:
+        return
+    filas = []
+    for marca, g in rep.groupby("Marca"):
+        filas.append({"Movimiento": "VERSION", "Periodo": clave, "Negocio": _texto(marca), "Servicios": int(len(g)),
+                      "Ventas": round(float(g["Precio"].sum()), 2),
+                      "Efectivo": round(float(g["Efectivo"].sum()), 2) if "Efectivo" in g else "",
+                      "Transferencia": round(float(g["Transferencia"].sum()), 2) if "Transferencia" in g else "",
+                      "POS": round(float(g["POS"].sum()), 2) if "POS" in g else "", "Archivo": ss.get("pdf_nombre", "")})
+    huella = hashlib.md5(json.dumps(filas, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:12]
+    if ss.get("_ventas_firma") == (clave, huella):
+        return
+    version = ahora_sv().strftime("%Y-%m-%d %H:%M")
+    for f in filas:
+        f.update({"Version": version, "Clave_Unica": f"VEN|{clave}|{f['Negocio']}|{huella}"})
+    obtener_almacen().registrar_varios("Ventas_Periodo", filas)
+    ss["_ventas_firma"] = (clave, huella)
 
 
 def autoguardar_planilla(datos_emp=None):
@@ -3154,12 +3579,115 @@ def autoguardar_planilla(datos_emp=None):
     if not filas_h or firma_planilla(filas_h) == ss.get("autoguardado_firma"):
         return
     primera_vez = ss.get("autoguardado_periodo") != ss["periodo_texto"]
+    guardar_ventas_periodo()
     if guardar_planilla_actual(filas_h, automatico=True):
         if primera_vez:
             st.toast("Planilla guardada automáticamente en Google Sheets (Historial_Planillas).", icon="☁️")
+    elif (ss.get("autoguardado_estado") or {}).get("bloqueado"):
+        return
     elif ss.get("sheets_ok") and ss.get("_aviso_autoguardado") != ss["periodo_texto"]:
         ss["_aviso_autoguardado"] = ss["periodo_texto"]
         st.toast("No se pudo guardar la planilla en Google Sheets: quedó solo en esta sesión.", icon="⚠️")
+
+
+def resumen_integrado(datos_emp, clave):
+    """Calculado (fórmula original) → ajustes → anticipos → cuotas → neto → entregado → pendiente, por colaborador."""
+    actual = {d["Colaborador"]: round(float(d["Total"]), 2) for d in datos_emp}
+    guardado = {}
+    for r in planilla_guardada(clave):
+        guardado[_texto(r.get("Colaborador"))] = round(float(_a_numero(r.get("Total")) or 0.0), 2)
+    bloqueado = periodo_con_pagos(clave)
+    base = guardado if (bloqueado and guardado) else actual
+    filas = fin.resumen_pagos_periodo(clave, base, leer_tabla("Pagos_Personal"), leer_tabla("Anticipos"), leer_tabla("Prestamos"),
+                                      leer_tabla("Ajustes_Planilla"), guardado=bool(guardado))
+    return filas, actual, guardado, bloqueado
+
+
+def seccion_integracion_planilla(datos_emp, clave):
+    """Anticipos, préstamos, ajustes y pagos del período dentro de Planillas. Devuelve {colaborador: fila del resumen}."""
+    filas, actual, guardado, bloqueado = resumen_integrado(datos_emp, clave)
+    por_colab = {f["Colaborador"]: f for f in filas}
+    ajustes_vig = fin.ajustes_periodo(leer_tabla("Ajustes_Planilla"), clave)
+    with tarjeta("int_planilla"):
+        md(titulo_seccion("💳 Anticipos, préstamos y pagos de este período",
+                          "La fórmula de la planilla no cambia: los anticipos y cuotas se restan después del total, con referencia a su movimiento."))
+        if bloqueado:
+            md("<div class='chips'>" + chip("🔒 Ya hay pagos registrados para este período: la planilla guardada es la referencia y cualquier cambio se documenta como ajuste.", "violet") + "</div>")
+        df = pd.DataFrame(filas)
+        if not df.empty:
+            vista = df.assign(Estado=df["Estado"].map(v_comun.con_icono)).rename(columns={
+                "Calculado": "Total planilla", "Anticipos": "Anticipos aplicados", "Cuotas_Prestamo": "Cuotas préstamo", "Neto": "Neto a entregar"})
+            st.dataframe(vista.style.format("${:,.2f}", subset=["Total planilla", "Ajustes", "Anticipos aplicados", "Cuotas préstamo", "Neto a entregar", "Entregado", "Pendiente"]),
+                         hide_index=True, **ancho(st.dataframe))
+        if bloqueado and guardado:
+            diferencias = []
+            for colab, total_actual in actual.items():
+                vigente = round(guardado.get(colab, 0.0) + ajustes_vig.get(colab, 0.0), 2)
+                if abs(total_actual - vigente) >= 0.005:
+                    diferencias.append((colab, vigente, total_actual))
+            if diferencias:
+                st.warning("La planilla calculada ahora es distinta a la que ya se pagó. No se cambia el dinero histórico: registra la diferencia como ajuste (con motivo).")
+                st.dataframe(pd.DataFrame([{"Colaborador": c, "Vigente (pagado sobre)": v, "Calculado ahora": n, "Diferencia": round(n - v, 2)} for c, v, n in diferencias])
+                             .style.format("${:,.2f}", subset=["Vigente (pagado sobre)", "Calculado ahora", "Diferencia"]), hide_index=True, **ancho(st.dataframe))
+                a, b, c = columnas([1.2, 2, 1], "bottom")
+                colab_aj = a.selectbox("Colaborador", [d[0] for d in diferencias], key="aj_pl_colab")
+                motivo_aj = b.text_input("Motivo del ajuste", key="aj_pl_motivo")
+                if c.button("📝 Registrar ajuste", key="aj_pl_btn", type="primary", **ancho(st.button)):
+                    _, vig, nuevo = next(d for d in diferencias if d[0] == colab_aj)
+                    v_comun.ejecutar(CTX, "Ajustes_Planilla", lambda: fin.preparar_ajuste_planilla(clave, colab_aj, vig, nuevo, motivo_aj),
+                                     f"Ajuste de {usd(nuevo - vig)} registrado para {colab_aj}.", auditoria=("Ajuste de planilla", f"{colab_aj} · {usd(nuevo - vig)} · {motivo_aj}"))
+
+        empleados_planilla = set(actual)
+        activos = [a for a in fin.estado_anticipos(leer_tabla("Anticipos")) if a["Estado"] in ("Pendiente", "Parcial") and a["Colaborador"] in empleados_planilla]
+        prestamos = [p for p in fin.estado_prestamos(leer_tabla("Prestamos"), ahora_sv().date()) if p["Estado"] in ("Vigente", "Atrasado") and p["Colaborador"] in empleados_planilla]
+        c_ant, c_pre = st.columns(2)
+        with c_ant:
+            md(titulo_seccion("✂️ Anticipos por descontar", "Se descuentan una sola vez; recalcular la planilla no los vuelve a restar."))
+            if not activos:
+                st.caption("No hay anticipos pendientes para el personal de esta planilla.")
+            else:
+                etiquetas = {a["ID"]: f"{a['Colaborador']} · {a['Fecha'][:10]} · saldo {usd(a['Saldo'])}" + (" · ✅ corresponde a este período" if a["Periodo"] == clave else "")
+                             for a in activos}
+                aid = st.selectbox("Anticipo", list(etiquetas), format_func=etiquetas.get, key="int_ant_id")
+                a_sel = next(a for a in activos if a["ID"] == aid)
+                disponible = max(0.0, por_colab.get(a_sel["Colaborador"], {}).get("Neto", 0.0))
+                maximo = round(min(a_sel["Saldo"], disponible), 2)
+                monto = st.number_input("Monto a descontar ($)", min_value=0.0, max_value=float(maximo), value=float(maximo), step=0.01, format="%.2f", key=f"int_ant_monto_{aid}")
+                st.caption(f"Neto disponible de {a_sel['Colaborador']}: {usd(disponible)} · saldo del anticipo {usd(a_sel['Saldo'])} → {usd(a_sel['Saldo'] - monto)}")
+                if st.button("✂️ Descontar en esta planilla", key="int_ant_btn", type="primary", disabled=maximo < 0.005, **ancho(st.button)):
+                    v_comun.ejecutar(CTX, "Anticipos", lambda: fin.preparar_descuento_anticipo(v_comun.lectura_fresca(CTX, "Anticipos"), aid, clave, monto),
+                                     f"Anticipo de {a_sel['Colaborador']} descontado ({usd(monto)}).",
+                                     auditoria=("Anticipo descontado en planilla", f"{a_sel['Colaborador']} · {usd(monto)} · {clave}"))
+        with c_pre:
+            md(titulo_seccion("🏦 Cuotas de préstamos", "Solo se descuentan con autorización y según lo acordado."))
+            if not prestamos:
+                st.caption("No hay préstamos vigentes para el personal de esta planilla.")
+            else:
+                etiquetas = {p["ID"]: f"{p['Colaborador']} · cuota {usd(p['Cuota'])} · saldo {usd(p['Saldo'])} · {p['Estado']}" for p in prestamos}
+                pid = st.selectbox("Préstamo", list(etiquetas), format_func=etiquetas.get, key="int_pre_id")
+                p_sel = next(p for p in prestamos if p["ID"] == pid)
+                disponible = max(0.0, por_colab.get(p_sel["Colaborador"], {}).get("Neto", 0.0))
+                maximo = round(min(p_sel["Saldo"], disponible), 2)
+                monto = st.number_input("Cuota a descontar ($)", min_value=0.0, max_value=float(maximo), value=float(min(p_sel["Cuota"], maximo)), step=0.01,
+                                        format="%.2f", key=f"int_pre_monto_{pid}")
+                st.caption(f"Condiciones: {p_sel['Condiciones']}")
+                autorizado = st.text_input("Autorizado por", value=usuario_actual()["nombre"], key="int_pre_aut")
+                confirmar = st.checkbox(f"Confirmo: saldo anterior {usd(p_sel['Saldo'])} − cuota {usd(monto)} = nuevo saldo {usd(p_sel['Saldo'] - monto)}", key=f"int_pre_conf_{pid}")
+                if st.button("🏦 Descontar cuota", key="int_pre_btn", type="primary", disabled=not confirmar or maximo < 0.005, **ancho(st.button)):
+                    v_comun.ejecutar(CTX, "Prestamos", lambda: fin.preparar_cuota_planilla(v_comun.lectura_fresca(CTX, "Prestamos"), pid, clave, monto, autorizado, hoy=ahora_sv().date()),
+                                     f"Cuota de {p_sel['Colaborador']} descontada ({usd(monto)}).",
+                                     auditoria=("Cuota de préstamo en planilla", f"{p_sel['Colaborador']} · {usd(monto)} · autorizó {autorizado}"))
+    return por_colab
+
+
+def registrar_lote_bancario(incluidos, clave, texto_pago):
+    """Marca como entregados los pagos de un archivo bancario ya procesado (una sola vez por lote)."""
+    huella = hashlib.md5(texto_pago.encode("utf-8")).hexdigest()[:10]
+    fecha_hoy = ahora_sv().strftime("%Y-%m-%d")
+    registros = [fin.nuevo_pago(p["Colaborador"], fecha_hoy, "Sueldo / planilla", p["Monto"], "Transferencia bancaria", periodo=clave,
+                                referencia=f"Lote {BANCO_PLANILLA} {fecha_hoy} #{huella}", negocio=negocio_de().get(p["Colaborador"], ""),
+                                clave_unica=f"BANCO|{clave}|{p['Colaborador']}|{huella}") for p in incluidos]
+    return registros
 
 
 def chip_autoguardado():
@@ -3167,6 +3695,8 @@ def chip_autoguardado():
     est = ss.get("autoguardado_estado") or {}
     if not ss.get("pdf_ok"):
         return ""
+    if est.get("bloqueado") and est.get("periodo") == ss["periodo_texto"]:
+        return chip("🔒 Período con pagos registrados: la planilla guardada no se reemplaza · los cambios se registran como ajustes", "violet")
     if not aj("autoguardado"):
         return chip("⏸️ Guardado automático apagado · usa «Guardar en historial»", "amber")
     if est.get("periodo") != ss["periodo_texto"]:
@@ -3318,19 +3848,34 @@ if pagina == "Planillas":
                 if guardar_hist:
                     if guardar_planilla_actual(filas_historial(datos_emp)):
                         st.toast("Planilla guardada en el historial de Google Sheets.", icon="☁️")
+                    elif (ss.get("autoguardado_estado") or {}).get("bloqueado"):
+                        st.info("Este período ya tiene pagos registrados: la planilla guardada no se reemplaza. "
+                                "Si algo cambió, regístralo como ajuste en «Anticipos, préstamos y pagos de este período».")
                     else:
                         st.error("No se pudo guardar en Google Sheets (quedó guardada solo en esta sesión). Revisa la conexión en Configuración → Respaldo y conexión.")
+
+            clave_periodo_pl = periodo_clave_actual() if ss.get("pdf_ok") else ""
+            integracion = {}
+            if clave_periodo_pl:
+                espacio(10)
+                integracion = seccion_integracion_planilla(datos_emp, clave_periodo_pl)
+
+            def monto_a_pagar(d):
+                fila_int = integracion.get(d["Colaborador"])
+                return round(float(fila_int["Pendiente"]), 2) if fila_int else round(float(d["Total"]), 2)
 
             espacio(10)
             with tarjeta("pago_banco"):
                 md(titulo_seccion(f"🏦 Pago de planilla · {BANCO_PLANILLA}",
-                                  "Archivo separado por comas (cuenta, monto, nombre del titular) con los totales de esta planilla, listo para cargar en la banca en línea."))
+                                  "Archivo separado por comas (cuenta, monto, nombre del titular) con lo PENDIENTE por entregar "
+                                  "(total de la planilla − anticipos − cuotas − lo ya pagado), listo para cargar en la banca en línea."))
                 base_pago = pd.DataFrame([{
-                    "Pagar": bool(d["Total"] > 0), "Colaborador": d["Colaborador"],
+                    "Pagar": bool(monto_a_pagar(d) > 0), "Colaborador": d["Colaborador"],
                     "Cuenta": cuenta_banco(ss["empleados"].get(d["Colaborador"], {}).get("cuenta")),
-                    "Monto": round(float(d["Total"]), 2),
+                    "Monto": monto_a_pagar(d),
                     "Nombre en el banco": _texto(ss["empleados"].get(d["Colaborador"], {}).get("titular")) or d["Colaborador"],
                 } for d in datos_emp])
+                total_pagar = round(sum(monto_a_pagar(d) for d in datos_emp), 2)
                 pago_editado = st.data_editor(
                     base_pago, hide_index=True, key=f"editor_pago_{ss['nonce_editor_personal']}", disabled=["Colaborador", "Monto"],
                     column_config={
@@ -3338,7 +3883,7 @@ if pagina == "Planillas":
                         "Colaborador": st.column_config.TextColumn("Colaborador"),
                         "Cuenta": st.column_config.TextColumn(f"Cuenta {BANCO_PLANILLA}", help="Solo números."),
                         "Monto": st.column_config.NumberColumn("Monto a pagar", format="$%.2f",
-                                                               help="Total de la planilla. Para cambiarlo usa bonos o descuentos en el detalle de la persona."),
+                                                               help="Pendiente por entregar. Para cambiarlo usa bonos, descuentos, anticipos o cuotas."),
                         "Nombre en el banco": st.column_config.TextColumn("Nombre del titular", width="large"),
                     },
                     **ancho(st.data_editor),
@@ -3352,7 +3897,7 @@ if pagina == "Planillas":
                 if len(seleccion) < len(pago_editado):
                     chips_pago += chip(f"⏭️ {len(pago_editado) - len(seleccion)} desmarcado(s)", "sky")
                 if abs(total_banco - total_pagar) > 0.005:
-                    chips_pago += chip(f"Diferencia con la planilla: {usd(total_pagar - total_banco)}", "amber")
+                    chips_pago += chip(f"Diferencia con lo pendiente: {usd(total_pagar - total_banco)}", "amber")
                 md(f"<div class='chips'>{chips_pago}</div>")
                 if problemas:
                     st.warning("No se incluyeron en el archivo: " + "; ".join(problemas) + ". Revisa su cuenta en la tabla o en Configuración → Personal y sueldos.")
@@ -3395,6 +3940,14 @@ if pagina == "Planillas":
                 with st.expander("👁️ Ver el contenido del archivo"):
                     st.code(texto_pago or "(No hay pagos para incluir)", language=None)
                     st.caption("Formato: cuenta,monto,nombre · una línea por persona · sin encabezado · montos con punto decimal · nombres sin tildes.")
+                if incluidos and clave_periodo_pl:
+                    md(titulo_seccion("✅ ¿El banco ya procesó el pago?", "Descargar el archivo NO marca nada como pagado. Cuando Davivienda confirme, regístralo aquí: "
+                                                                        "queda como pago entregado y el pendiente baja a $0. El mismo archivo no se puede registrar dos veces."))
+                    confirmar_lote = st.checkbox(f"Confirmo que el banco procesó {len(incluidos)} pago(s) por {usd(total_banco)}", key="conf_lote_banco")
+                    if st.button("✅ Registrar como pagado", type="primary", disabled=not confirmar_lote, key="btn_lote_banco"):
+                        v_comun.ejecutar(CTX, "Pagos_Personal", lambda: registrar_lote_bancario(incluidos, clave_periodo_pl, texto_pago),
+                                         f"{len(incluidos)} pago(s) registrados como entregados ({usd(total_banco)}).",
+                                         auditoria=(f"Lote {BANCO_PLANILLA} registrado como pagado", f"{clave_periodo_pl} · {len(incluidos)} pago(s) · {usd(total_banco)}"))
 
         espacio(10)
         c_ind, c_mas = st.columns([1.25, 1])
@@ -3405,7 +3958,7 @@ if pagina == "Planillas":
                 e_dat = next(i for i in datos_emp if i["Colaborador"] == e_sel)
                 if st.button("👁️ Generar recibo PDF", type="primary"):
                     with st.spinner("Generando comprobante..."):
-                        ss['t_pdf'] = generar_recibo_pdf(e_dat, ss['periodo_texto'])
+                        ss['t_pdf'] = generar_recibo_pdf(e_dat, ss['periodo_texto'], integracion.get(e_sel))
                         ss['t_path'] = nombre_archivo("Recibo", e_sel)
                         ss['t_emp'] = e_sel
                     st.toast(f"Recibo de {e_sel} generado.", icon="📄")
@@ -3445,7 +3998,7 @@ if pagina == "Planillas":
                         for i, d in enumerate(destinatarios, 1):
                             try:
                                 adjunto = nombre_archivo("Recibo", d["Colaborador"])
-                                msg = mensaje_recibo(remitente, d, generar_recibo_pdf(d, ss['periodo_texto']), adjunto, ss['periodo_texto'])
+                                msg = mensaje_recibo(remitente, d, generar_recibo_pdf(d, ss['periodo_texto'], integracion.get(d["Colaborador"])), adjunto, ss['periodo_texto'])
                                 servidor_smtp.sendmail(remitente, d["Email"], msg.as_string())
                                 registrar_auditoria("Recibo de Pago (envío masivo)", d["Colaborador"])
                                 enviados += 1
@@ -3805,7 +4358,7 @@ elif pagina == "Auditoría":
             periodo_sel = st.selectbox("Período", periodos, key="hist_periodo")
             sub = df_h[df_h["Periodo"] == periodo_sel]
             fila_kpis([
-                kpi_html("🧾", "Total pagado", usd(sub["Total"].sum()), f"{len(sub)} colaboradores", "indigo", "prim"),
+                kpi_html("🧾", "Total calculado", usd(sub["Total"].sum()), f"{len(sub)} colaboradores · lo pagado está en «Pagos al personal»", "indigo", "prim"),
                 kpi_html("💰", "Ventas del período", usd(sub["Ventas"].sum()), f"{int(sub['Servicios'].sum())} servicios", "green"),
                 kpi_html("💼", "Comisiones", usd(sub["Comision"].sum()), f"Sueldos netos {usd(sub['Sueldo_Neto'].sum())}", "sky"),
                 kpi_html("💾", "Guardado", html.escape(_texto(sub["Guardado"].iloc[0]) if "Guardado" in sub.columns and len(sub) else "—"), "Fecha del respaldo", "violet"),
@@ -3833,11 +4386,11 @@ elif pagina == "Auditoría":
                                            key="dl_banco_historial", **ancho(st.download_button))
             if len(periodos) > 1:
                 with tarjeta("historial_resumen"):
-                    md(titulo_seccion("📈 Comparativo entre períodos", "Total pagado y ventas de cada planilla guardada"))
-                    comp = (df_h.groupby("Periodo", sort=False).agg(Ventas=("Ventas", "sum"), Pagado=("Total", "sum"), Colaboradores=("Colaborador", "count"))
+                    md(titulo_seccion("📈 Comparativo entre períodos", "Planilla calculada y ventas de cada período guardado"))
+                    comp = (df_h.groupby("Periodo", sort=False).agg(Ventas=("Ventas", "sum"), Calculado=("Total", "sum"), Colaboradores=("Colaborador", "count"))
                             .reset_index().iloc[::-1])
-                    comp["% de ventas"] = (comp["Pagado"] / comp["Ventas"].where(comp["Ventas"] > 0) * 100).fillna(0.0)
-                    st.dataframe(comp.style.format({"Ventas": "${:,.2f}", "Pagado": "${:,.2f}", "% de ventas": "{:.1f}%"}), hide_index=True, **ancho(st.dataframe))
+                    comp["% de ventas"] = (comp["Calculado"] / comp["Ventas"].where(comp["Ventas"] > 0) * 100).fillna(0.0)
+                    st.dataframe(comp.style.format({"Ventas": "${:,.2f}", "Calculado": "${:,.2f}", "% de ventas": "{:.1f}%"}), hide_index=True, **ancho(st.dataframe))
         else:
             estado_vacio(img_reporte(), "Todavía no hay planillas guardadas",
                          "Sube el reporte de ventas en Planillas: la planilla del período se guarda sola aquí (y en Google Sheets) como respaldo de cada quincena o mes.")
@@ -3864,7 +4417,11 @@ elif pagina == "Auditoría":
 
 elif pagina == "Configuración":
     encabezado_pagina("⚙️", "Configuración", "Personal y forma de pago, salario mínimo y reglas, apariencia de la app, respaldo y conexión con Google Sheets.")
-    tab_p, tab_s, tab_a, tab_r = st.tabs(["👥 Personal y sueldos", "💵 Salario mínimo y reglas", "🎨 Apariencia y empresa", "☁️ Respaldo y conexión"])
+    tab_p, tab_s, tab_a, tab_r, tab_seg = st.tabs(["👥 Personal y sueldos", "💵 Salario mínimo y reglas", "🎨 Apariencia y empresa", "☁️ Respaldo y conexión",
+                                                   "🔐 Seguridad y usuarios"])
+
+    with tab_seg:
+        v_seguridad.tarjeta_usuarios(CTX, USUARIOS)
 
     # ---------------- Personal y sueldos ----------------
     with tab_p:
@@ -3941,9 +4498,15 @@ elif pagina == "Configuración":
                 b.text_input("Cuenta bancaria", key="fe_cuenta", placeholder="Solo números")
                 c.text_input("Titular de la cuenta", key="fe_titular", placeholder="Como aparece en el banco",
                              help=f"Nombre que va en el archivo de pago de {BANCO_PLANILLA}. Vacío = nombre del colaborador.")
-                a, b = st.columns([1, 2])
+                a, b, c = st.columns([1, 1, 1.4])
                 a.text_input("Fecha de ingreso", key="fe_fecha_ingreso", placeholder="dd/mm/aaaa")
-                b.text_input("Alias en el reporte PDF", key="fe_alias",
+                negocios_form = [""] + lista_ajuste("negocios")
+                if _texto(ss.get("fe_negocio")) not in negocios_form:
+                    negocios_form.append(_texto(ss.get("fe_negocio")))
+                ss["fe_negocio"] = _texto(ss.get("fe_negocio"))
+                b.selectbox("Negocio / sucursal", negocios_form, key="fe_negocio", format_func=lambda n: n or "Sin asignar",
+                            help="Para horarios por negocio y para repartir el costo de planilla por negocio en los reportes.")
+                c.text_input("Alias en el reporte PDF", key="fe_alias",
                              help="Nombre con el que aparece en la columna PROFESIONAL del reporte. Varios separados con | (ej. MAYDELY|MEY). Vacío = primer nombre.")
                 g1, g2, _ = st.columns([1.3, 1, 1.6])
                 g1.button("💾 Guardar colaborador", type="primary", on_click=guardar_form_empleado, **ancho(st.button))
@@ -3983,13 +4546,15 @@ elif pagina == "Configuración":
 
         espacio(10)
         with st.expander("📋 Edición rápida en tabla (varias personas a la vez)"):
-            df_emp = pd.DataFrame([{"Nombre": n, "rol": i.get("rol", ""), "mod": i.get("mod", MOD_FIJO), "sueldo_base_neto": float(sueldo_neto_de(i)),
+            df_emp = pd.DataFrame([{"_original": n, "Nombre": n, "rol": i.get("rol", ""), "mod": i.get("mod", MOD_FIJO), "sueldo_base_neto": float(sueldo_neto_de(i)),
                                     "porc": float(i.get("porc", 0) or 0), "alias": i.get("alias", ""), "correo": i.get("correo", ""),
-                                    "dui": i.get("dui", ""), "cuenta": i.get("cuenta", ""), "titular": i.get("titular", "")}
+                                    "dui": i.get("dui", ""), "cuenta": i.get("cuenta", ""), "titular": i.get("titular", ""), "negocio": i.get("negocio", "")}
                                    for n, i in ss["empleados"].items()])
             df_editado = st.data_editor(
                 df_emp, num_rows="dynamic", hide_index=True, key=f"editor_personal_{ss['nonce_editor_personal']}",
                 column_config={
+                    "_original": None,  # columna oculta: permite renombrar sin perder los demás datos de la persona
+                    "negocio": st.column_config.SelectboxColumn("Negocio", options=[""] + lista_ajuste("negocios")),
                     "Nombre": st.column_config.TextColumn("Nombre", required=True),
                     "rol": st.column_config.SelectboxColumn("Rol", options=ROLES, required=True),
                     "mod": st.column_config.SelectboxColumn("Forma de pago", options=MODALIDADES, required=True, width="medium"),
@@ -4006,21 +4571,32 @@ elif pagina == "Configuración":
             if st.button("💾 Guardar tabla de personal", type="primary"):
                 anteriores = ss["empleados"]
                 nuevos, cambiados = {}, []
+                repetidos = []
                 for r in df_editado.to_dict("records"):
                     nombre = _texto(r.get("Nombre"))
                     if not nombre:
                         continue
-                    previo = anteriores.get(nombre, {})
+                    if nombre in nuevos:
+                        repetidos.append(nombre)
+                        continue
+                    original = _texto(r.get("_original"))
+                    previo = anteriores.get(original) or anteriores.get(nombre, {})
                     datos_emp_tabla = dict(previo)
                     datos_emp_tabla.update({"rol": r.get("rol"), "mod": r.get("mod"), "porc": r.get("porc"), "sueldo_base_neto": r.get("sueldo_base_neto"),
                                             "alias": r.get("alias"), "correo": r.get("correo"), "dui": r.get("dui"),
-                                            "cuenta": cuenta_banco(r.get("cuenta")), "titular": r.get("titular")})
+                                            "cuenta": cuenta_banco(r.get("cuenta")), "titular": r.get("titular"), "negocio": r.get("negocio")})
                     info_n = _empleado_normalizado(datos_emp_tabla)
                     nuevos[nombre] = info_n
+                    if original and original != nombre and original in anteriores:
+                        for pref in ("hex_", "desc_", "notas_"):  # al renombrar se conservan bonos, descuentos y notas del período
+                            if f"{pref}{original}" in ss:
+                                ss[f"{pref}{nombre}"] = ss[f"{pref}{original}"]
                     if (not previo or previo.get("rol") != info_n["rol"] or previo.get("mod") != info_n["mod"]
                             or sueldo_neto_de(previo) != info_n["sueldo_base_neto"]):
                         cambiados.append(nombre)
-                if not nuevos:
+                if repetidos:
+                    st.error(f"Hay nombres repetidos en la tabla: {', '.join(repetidos)}. Cada colaborador debe tener un nombre distinto.")
+                elif not nuevos:
                     st.error("Debe existir al menos un colaborador con nombre.")
                 else:
                     if _aplicar_cambios_personal(nuevos, cambiados):
@@ -4029,6 +4605,37 @@ elif pagina == "Configuración":
                         notificar_error("No se pudo sincronizar con Google Sheets. Los cambios de personal quedaron solo en esta sesión.")
                     ss["fe_recargar"] = True
                     st.rerun()
+
+        with st.expander(f"🏦 Importar cuentas desde el archivo de {BANCO_PLANILLA} (cuenta,monto,nombre)"):
+            st.caption("Pega las líneas del archivo que ya usas para pagar (o súbelo). La app reconoce a cada persona por su nombre y guarda su cuenta y el nombre del "
+                       "titular en Google Sheets. El monto del archivo se ignora. Por seguridad, las cuentas ya no se guardan dentro del código de la app.")
+            archivo_cuentas = st.file_uploader("Archivo .csv o .txt", type=["csv", "txt"], key="imp_cuentas_archivo")
+            texto_cuentas = st.text_area("…o pega aquí las líneas", key="imp_cuentas_texto", height=140,
+                                         placeholder="5540496530,185.49,Mario Antonio De Paz Velasquez")
+            contenido = archivo_cuentas.getvalue().decode("utf-8-sig", errors="replace") if archivo_cuentas is not None else texto_cuentas
+            lineas_banco = leer_lineas_banco(contenido)
+            if lineas_banco:
+                vista_imp = pd.DataFrame([{**l, "Colaborador": sugerir_colaborador(l["Titular"], ss["empleados"])} for l in lineas_banco])
+                editado_imp = st.data_editor(vista_imp, hide_index=True, key=f"imp_cuentas_editor_{len(lineas_banco)}", disabled=["Cuenta", "Titular"],
+                                             column_config={"Colaborador": st.column_config.SelectboxColumn("Colaborador en la app", options=[""] + list(ss["empleados"]))},
+                                             **ancho(st.data_editor))
+                asignadas = [r for r in editado_imp.to_dict("records") if _texto(r.get("Colaborador"))]
+                sin_asignar = len(editado_imp) - len(asignadas)
+                if sin_asignar:
+                    st.warning(f"{sin_asignar} línea(s) sin colaborador: elígelo en la tabla o se omitirán.")
+                if st.button(f"💾 Guardar {len(asignadas)} cuenta(s) en el personal", type="primary", disabled=not asignadas, key="imp_cuentas_btn"):
+                    nuevos_imp = {k: dict(v) for k, v in ss["empleados"].items()}
+                    for r in asignadas:
+                        nuevos_imp[r["Colaborador"]].update({"cuenta": r["Cuenta"], "titular": r["Titular"], "banco": BANCO_PLANILLA})
+                    if _aplicar_cambios_personal(nuevos_imp):
+                        registrar_auditoria(f"Cuentas {BANCO_PLANILLA} importadas", f"{len(asignadas)} colaborador(es)")
+                        notificar(f"Cuentas guardadas para {len(asignadas)} colaborador(es).", "🏦")
+                    else:
+                        notificar_error("Las cuentas quedaron en esta sesión, pero no se pudieron guardar en Google Sheets.")
+                    ss["fe_recargar"] = True
+                    st.rerun()
+            elif _texto(contenido):
+                st.warning("No se reconoció ninguna línea con el formato cuenta,monto,nombre.")
 
     # ---------------- Salario mínimo y reglas ----------------
     with tab_s:
@@ -4070,6 +4677,34 @@ elif pagina == "Configuración":
                    f"<b>Sueldo:</b> bruto = neto ÷ {factor_neto():.2f}; renta = bruto × {aj('renta_pct'):g}%.</div>")
                 espacio(6)
                 st.button("↩️ Restaurar reglas oficiales ($60 · 25% · 10%)", on_click=restaurar_reglas)
+        espacio(8)
+        l1, l2 = st.columns(2)
+        with l1:
+            with tarjeta("listas"):
+                md(titulo_seccion("🗂️ Listas de la app", "Sepáralas con comas. Se usan en pagos, caja, cuentas por pagar, horarios y reportes."))
+                for clave_l, etiqueta_l in (("metodos_pago", "Métodos de pago"), ("conceptos_pago", "Conceptos de pago al personal"),
+                                            ("categorias_gasto", "Categorías de gasto"), ("categorias_ingreso", "Categorías de ingreso"),
+                                            ("negocios", "Negocios / sucursales")):
+                    st.text_area(etiqueta_l, value=_texto(aj(clave_l)), key=f"aj_{clave_l}", height=68, on_change=actualizar_ajuste, args=(clave_l, f"aj_{clave_l}"))
+                st.caption(f"«{'», «'.join(fin.CONCEPTOS_PLANILLA)}» cuentan contra la planilla del período; los demás conceptos se pagan aparte.")
+        with l2:
+            with tarjeta("reglas_asistencia"):
+                md(titulo_seccion("🕒 Reglas de asistencia", "Valores de referencia para detectar tardanzas y posibles horas extra. "
+                                                            "Verifícalos con la normativa laboral vigente (Código de Trabajo) o con tu asesor: la app no aplica descuentos automáticos."))
+                a, b = st.columns(2)
+                a.number_input("Tolerancia de entrada por defecto (min)", min_value=0.0, max_value=60.0, step=1.0, value=float(aj("tolerancia_min")),
+                               key="aj_tolerancia_min", on_change=actualizar_ajuste, args=("tolerancia_min", "aj_tolerancia_min"))
+                b.number_input("Horas extra: avisar desde (min sobre el horario)", min_value=0.0, max_value=240.0, step=5.0, value=float(aj("umbral_horas_extra_min")),
+                               key="aj_umbral_horas_extra_min", on_change=actualizar_ajuste, args=("umbral_horas_extra_min", "aj_umbral_horas_extra_min"))
+                a, b = st.columns(2)
+                a.number_input("Jornada diaria de referencia (h)", min_value=1.0, max_value=24.0, step=0.5, value=float(aj("jornada_diaria_h")),
+                               key="aj_jornada_diaria_h", on_change=actualizar_ajuste, args=("jornada_diaria_h", "aj_jornada_diaria_h"))
+                b.number_input("Jornada semanal de referencia (h)", min_value=1.0, max_value=84.0, step=1.0, value=float(aj("jornada_semanal_h")),
+                               key="aj_jornada_semanal_h", on_change=actualizar_ajuste, args=("jornada_semanal_h", "aj_jornada_semanal_h"))
+                st.toggle("Permitir marcar pausas (inicio y fin)", value=bool(aj("pausas_habilitadas")), key="aj_pausas_habilitadas",
+                          on_change=actualizar_ajuste, args=("pausas_habilitadas", "aj_pausas_habilitadas"))
+                st.number_input("Avisar vencimientos con (días de anticipación)", min_value=1.0, max_value=120.0, step=1.0, value=float(aj("dias_alerta")),
+                                key="aj_dias_alerta", on_change=actualizar_ajuste, args=("dias_alerta", "aj_dias_alerta"))
         espacio(8)
         if st.button("☁️ Guardar salario y reglas en Google Sheets", key="guardar_aj_s"):
             if guardar_ajustes(ss["ajustes"]):
@@ -4176,6 +4811,7 @@ elif pagina == "Configuración":
                         fallidas = [h for h, ok in (resultados or {}).items() if not ok]
                         st.error("No se pudieron preparar estas pestañas: " + (", ".join(fallidas) if fallidas else "sin conexión"))
                 if k4.button("⬇️ Recargar desde Sheets", disabled=not conectado, **ancho(st.button)):
+                    obtener_almacen().invalidar()
                     ss["empleados"], ss["fuente_personal"] = cargar_empleados()
                     ss["proveedores"] = cargar_proveedores()
                     ss["ajustes"] = cargar_ajustes()
@@ -4200,8 +4836,11 @@ elif pagina == "Configuración":
                            "Si vuelves a subir el mismo período, se reemplaza: nunca se duplica.")
             with tarjeta("respaldo"):
                 md(titulo_seccion("💾 Respaldo de datos", "Copia completa de personal, proveedores, ajustes, auditoría e historial de esta sesión."))
-                respaldo = {"version": 4, "fecha": ahora_sv().strftime("%Y-%m-%d %H:%M"), "empleados": ss["empleados"], "proveedores": ss["proveedores"],
-                            "ajustes": ss["ajustes"], "auditoria": ss["historial_auditoria"], "historial_planillas": ss["historial_local"]}
+                respaldo = {"version": 5, "fecha": ahora_sv().strftime("%Y-%m-%d %H:%M"), "empleados": ss["empleados"], "proveedores": ss["proveedores"],
+                            "ajustes": ss["ajustes"], "auditoria": ss["historial_auditoria"], "historial_planillas": ss["historial_local"],
+                            "modulos": {t: [{k: v for k, v in r.items() if not str(k).startswith("_")} for r in leer_tabla(t)] for t in TABLAS if t != "Auditoria"},
+                            "pendientes_de_sincronizar": obtener_almacen().pendientes()}
+                st.caption("Incluye pagos, anticipos, préstamos, asistencia, horarios, expediente, caja, cuentas por pagar y las operaciones pendientes de sincronizar.")
                 st.download_button("⬇️ Descargar respaldo completo (JSON)", data=json.dumps(respaldo, ensure_ascii=False, indent=2, default=str).encode("utf-8"),
                                    file_name=f"Respaldo_{nombre_archivo('', aj('empresa_corto')).strip('_').replace('.pdf', '')}_{ahora_sv().strftime('%Y-%m-%d')}.json",
                                    mime="application/json", **ancho(st.download_button))
@@ -4240,6 +4879,25 @@ elif pagina == "Configuración":
                         st.rerun()
                     except Exception as ex:
                         st.error(f"No se pudo leer el respaldo: {ex}")
+            with tarjeta("pendientes_sync"):
+                alm_cfg = obtener_almacen()
+                pend_cfg = alm_cfg.pendientes()
+                md(titulo_seccion("⏳ Operaciones pendientes de sincronizar", "Pagos, anticipos, marcaciones u otros registros que no llegaron a Google Sheets."))
+                if not pend_cfg:
+                    md("<div class='chips'>" + chip("✅ Todo está guardado en Google Sheets", "green") + "</div>")
+                else:
+                    donde = ("en el archivo local de este equipo (se conserva si la app se reinicia aquí, pero NO es un respaldo en la nube)"
+                             if alm_cfg.cola.persistente else "solo en la memoria de esta sesión (se pierden si la app se reinicia)")
+                    st.warning(f"{len(pend_cfg)} operación(es) guardadas {donde}.")
+                    st.dataframe(pd.DataFrame([{"Tabla": i["tabla"], "ID": i["registro"].get("ID"), "Colaborador / detalle": i["registro"].get("Colaborador")
+                                                or i["registro"].get("Concepto") or i["registro"].get("Tipo Documento", ""), "Monto": i["registro"].get("Monto", ""),
+                                                "Desde": i.get("encolado"), "Motivo": str(i.get("error", ""))[:80]} for i in pend_cfg]),
+                                 hide_index=True, **ancho(st.dataframe))
+                    st.button("☁️ Sincronizar ahora", type="primary", on_click=sincronizar_pendientes, disabled=not sheets_configurado(), key="btn_sync_cfg")
+                    st.download_button("⬇️ Descargar pendientes (JSON)", data=json.dumps(pend_cfg, ensure_ascii=False, indent=2, default=str).encode("utf-8"),
+                                       file_name=f"Pendientes_{ahora_sv().strftime('%Y-%m-%d_%H%M')}.json", mime="application/json", key="dl_pend_cfg")
+                if alm_cfg.cola.error_archivo:
+                    st.caption(f"No se pudo usar el archivo local de pendientes: {alm_cfg.cola.error_archivo[:160]}")
             with tarjeta("plan_respaldo"):
                 md(titulo_seccion("🛡️ Plan de respaldo recomendado") + "<div class='tips'>"
                    "<div class='tip'><span>1️⃣</span>Cada planilla se guarda sola en «Historial_Planillas» al subir el PDF y se actualiza con cada bono, descuento o cambio de sueldo.</div>"
@@ -4247,7 +4905,23 @@ elif pagina == "Configuración":
                    "<div class='tip'><span>3️⃣</span>En Google Sheets usa «Archivo → Historial de versiones» para volver a cualquier día, y «Archivo → Hacer una copia» al cierre de cada mes.</div>"
                    "<div class='tip'><span>4️⃣</span>Guarda también los PDF de ventas originales en Drive, por mes.</div></div>")
 
-if pagina != "Planillas":
+# ---------------- Módulos administrativos (vistas/) ----------------
+elif pagina == "PanelAdmin":
+    v_panel.pagina(CTX)
+elif pagina == "Expediente":
+    v_expediente.pagina(CTX)
+elif pagina == "Pagos":
+    v_pagos.pagina(CTX)
+elif pagina == "Anticipos":
+    v_anticipos.pagina(CTX)
+elif pagina == "Asistencia":
+    v_asistencia.pagina_admin(CTX)
+elif pagina == "Finanzas":
+    v_finanzas.pagina(CTX)
+elif pagina == "MiAsistencia":
+    v_asistencia.pagina_mi_asistencia(CTX)
+
+if pagina != "Planillas" and es_admin():
     autoguardar_planilla()  # cambios hechos fuera de Planillas (sueldos, personal, reglas) también quedan guardados
 
 pie_pagina()
