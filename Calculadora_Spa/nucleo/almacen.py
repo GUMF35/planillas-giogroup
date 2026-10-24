@@ -37,12 +37,15 @@ TABLAS = {
     "Cuentas_por_Pagar": COMUNES + ["Proveedor", "Documento", "Fecha", "Vencimiento", "Monto", "Concepto", "Categoria", "Negocio",
                                     "Metodo", "Referencia", "Comprobante", "Observaciones", "Motivo", "Clave_Unica"],
     "Ventas_Periodo": COMUNES + ["Periodo", "Negocio", "Servicios", "Ventas", "Efectivo", "Transferencia", "POS", "Archivo", "Version", "Clave_Unica"],
+    "Visitas": COMUNES + ["Codigo", "Fecha", "Marca", "Colaborador", "Servicio", "Precio", "Estado", "Motivo", "Clave_Unica"],
+    "Encuestas": COMUNES + ["Codigo_Visita", "P1_Satisfaccion", "P2_Atencion", "P3_Pagos", "Comentario", "Fecha", "Clave_Unica"],
+    "Cupones": COMUNES + ["Codigo_Cupon", "Codigo_Visita", "Descuento", "Vencimiento", "Observaciones", "Clave_Unica"],
     "Auditoria": ["Fecha", "Tipo Documento", "Destinatario", "Usuario", "ID"],
 }
 
 PREFIJOS = {"Pagos_Personal": "PAG", "Anticipos": "ANT", "Prestamos": "PRE", "Ajustes_Planilla": "AJU", "Asistencia": "ASI",
             "Horarios": "HOR", "Incidencias": "INC", "Expediente": "EXP", "Caja": "CAJ", "Cuentas_por_Pagar": "CXP",
-            "Ventas_Periodo": "VEN", "Auditoria": "AUD"}
+            "Ventas_Periodo": "VEN", "Visitas": "VIS", "Encuestas": "ENC", "Cupones": "CUP", "Auditoria": "AUD"}
 
 GUARDADO, YA_EXISTIA, PENDIENTE, RECHAZADO = "guardado", "ya_existia", "pendiente", "rechazado"
 

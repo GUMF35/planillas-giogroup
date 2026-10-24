@@ -38,6 +38,7 @@ from nucleo.hojas import reemplazar_contenido
 from vistas import anticipos as v_anticipos
 from vistas import asistencia as v_asistencia
 from vistas import comun as v_comun
+from vistas import encuestas as v_encuestas
 from vistas import expediente as v_expediente
 from vistas import finanzas as v_finanzas
 from vistas import pagos as v_pagos
@@ -93,9 +94,13 @@ AJUSTES_POR_DEFECTO = {
     "umbral_horas_extra_min": 15.0,
     "pausas_habilitadas": True,
     "dias_alerta": 30.0,
+    # Encuestas por QR y cupones
+    "url_app": "",             # dirección pública de la app (para el QR); también puede ir en Secrets como app_url
+    "cupon_pct": 5.0,
+    "cupon_dias": 60.0,
 }
 AJUSTES_NUMERICOS = ("salario_minimo", "umbral_extra", "retencion_pub_pct", "renta_pct", "tolerancia_min", "jornada_diaria_h",
-                     "jornada_semanal_h", "umbral_horas_extra_min", "dias_alerta")
+                     "jornada_semanal_h", "umbral_horas_extra_min", "dias_alerta", "cupon_pct", "cupon_dias")
 REGLAS_OFICIALES = {"umbral_extra": 60.0, "retencion_pub_pct": 25.0, "renta_pct": 10.0}
 
 TEMAS = {
@@ -113,7 +118,7 @@ MENU = [
                    ("PanelAdmin", "📈", "Panel administrativo")]),
     ("Personal", [("Expediente", "🪪", "Expediente"), ("Pagos", "💸", "Pagos al personal"), ("Anticipos", "🤝", "Anticipos y préstamos"),
                   ("Asistencia", "🕒", "Asistencia y horarios")]),
-    ("Finanzas y gestión", [("Finanzas", "🏦", "Caja y cuentas"), ("Proveedores", "📇", "Proveedores"), ("Memorándums", "📝", "Memorándums"),
+    ("Finanzas y gestión", [("Visitas", "🛎️", "Visitas y encuestas"), ("Finanzas", "🏦", "Caja y cuentas"),("Proveedores", "📇", "Proveedores"), ("Memorándums", "📝", "Memorándums"),
                             ("Amonestaciones", "⚠️", "Amonestaciones")]),
     ("Sistema", [("Auditoría", "🗂️", "Historial"), ("Configuración", "⚙️", "Configuración")]),
 ]
@@ -3154,7 +3159,13 @@ def calculado_periodo(clave):
     return {}, False
 
 
+def aj_set(clave, valor):
+    st.session_state["ajustes"][clave] = valor
+    return guardar_ajustes(st.session_state["ajustes"])
+
+
 CTX = SimpleNamespace(
+    secreto=secreto, aj_set=aj_set,
     md=lambda contenido, destino=None: md(contenido, destino), tarjeta=lambda n: tarjeta(n), zona=lambda c: zona(c), chip=lambda t, c="": chip(t, c),
     kpi_html=lambda *a, **k: kpi_html(*a, **k), fila_kpis=lambda items: fila_kpis(items), titulo_seccion=lambda t, s="": titulo_seccion(t, s),
     encabezado_pagina=lambda i, t, s="": encabezado_pagina(i, t, s), espacio=lambda px=10: espacio(px), columnas=lambda s, a=None: columnas(s, a),
@@ -3175,6 +3186,14 @@ CTX = SimpleNamespace(
 # 15. ESTILOS + MENÚ LATERAL + NAVEGACIÓN EN TELÉFONO
 # =====================================================================
 md(css_tema() + CSS_BASE)
+
+# --- Enlace público de la encuesta (?encuesta=CODIGO): el cliente no ve el menú, el panel ni el inicio de sesión ---
+if "encuesta" in st.query_params:
+    md("<style>[data-testid='stSidebar'],[data-testid='stSidebarCollapsedControl'],[data-testid='stHeader'],[class*='st-key-navmovil']{display:none !important}"
+       ".block-container{padding:1.5rem 1rem !important;max-width:600px;margin:auto}</style>")
+    v_encuestas.pantalla_publica(CTX, st.query_params["encuesta"])
+    st.stop()  # nada más se ejecuta: ni el panel administrativo ni los datos del personal se muestran
+
 if USUARIOS and not st.session_state.get("usuario_sesion"):
     v_seguridad.pantalla_login(CTX, USUARIOS)
     st.stop()
@@ -4918,6 +4937,8 @@ elif pagina == "Asistencia":
     v_asistencia.pagina_admin(CTX)
 elif pagina == "Finanzas":
     v_finanzas.pagina(CTX)
+elif pagina == "Visitas":
+    v_encuestas.pagina_admin(CTX)
 elif pagina == "MiAsistencia":
     v_asistencia.pagina_mi_asistencia(CTX)
 
